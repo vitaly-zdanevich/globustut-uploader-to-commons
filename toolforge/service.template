@@ -1,0 +1,8 @@
+# Maximum self-service Toolforge web pod, with persistent NFS mounted.
+backend: kubernetes
+type: buildservice
+cpu: 3
+mem: 6Gi
+replicas: 1
+mount: all
+health-check-path: /healthz

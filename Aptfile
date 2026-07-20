@@ -1,0 +1,7 @@
+# Media decoders used at runtime by the Toolforge Build Service image.
+libvips-tools
+imagemagick
+ffmpeg
+libimage-exiftool-perl
+libraw-bin
+libheif1

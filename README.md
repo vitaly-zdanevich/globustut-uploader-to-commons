@@ -1,0 +1,156 @@
+# Globustut uploader to Commons
+
+Rust service for accepting freely licensed media from [Глобус Беларуси](https://globustut.by/), holding it in a private moderation queue, and preparing its metadata for Wikimedia Commons.
+
+This MVP **does not upload anything to Wikimedia Commons**. It stores accepted files on the Toolforge NFS volume until a moderator deletes them. Consequently, this release does not yet solve long-term storage pressure by itself.
+
+## Included in the MVP
+
+- public multi-file intake with a required Commons category and free-license declaration;
+- content-based media detection instead of trusting browser MIME types or extensions;
+- unchanged storage for Commons-compatible JPEG, PNG, GIF, TIFF, and WebP files;
+- conversion of other images understood by libvips or ImageMagick to WebP;
+- acceptance of already compatible WebM, Ogg Theora, and MPEG-1/2 video, with no video conversion;
+- EXIF capture date and GPS extraction, with an OpenStreetMap link in moderation;
+- local SQLite moderator accounts using Argon2id passwords and private sessions;
+- rename, category change, and permanent deletion controls;
+- Commons category autocomplete plus up to 20 closest categories from Wikidata `P625` and `P373`;
+- responsive light/dark UI, with an exact `#000` dark page background;
+- unit, media integration, HTTP workflow, and Playwright desktop/mobile tests.
+
+There is deliberately no OAuth code. Local login protects only `/admin`. A future Commons publisher will use one service-owned account configured by the operator; its password or token must be supplied through Toolforge secrets, never committed or entered by uploaders.
+
+## Image normalization
+
+Here, normalization means identifying the real image format, applying its orientation while converting, writing unsupported formats as Commons-compatible WebP, and generating a small moderation thumbnail. Already supported formats are preserved byte-for-byte, so JPEG photos are not needlessly recompressed.
+
+The file chooser permits every extension because the server performs the actual validation. "Any format" means any still-image format decoded by the installed libvips/ImageMagick stack and within the configured size/pixel limits. Damaged files, documents, executables, and unsupported video codecs are rejected.
+
+## Local development
+
+Requirements:
+
+- current stable Rust;
+- Node.js 22 or newer for browser tests;
+- `vips`, ImageMagick, FFmpeg/ffprobe, and ExifTool;
+- optional RAW/HEIF decoders (`dcraw`/`libraw` and `libheif`).
+
+```bash
+cp .env.example .env
+set -a
+source .env
+set +a
+cargo run -- user add moderator
+cargo run -- serve
+```
+
+Open `http://127.0.0.1:8000/` for upload and `http://127.0.0.1:8000/admin` for moderation. The source site can prefill a category:
+
+```text
+https://TOOLNAME.toolforge.org/?category=Castles_in_Belarus
+```
+
+Account commands operate on the configured SQLite database:
+
+```bash
+cargo run -- user list
+cargo run -- user add another-moderator
+cargo run -- user delete another-moderator
+```
+
+Passwords must contain at least 12 characters. For non-interactive setup, put a password in a short-lived environment variable and use `user add NAME --password-env VARIABLE`.
+
+## Configuration
+
+The defaults are shown in [.env.example](.env.example). Important settings are:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TOOL_DATA_DIR` | `data`, or a private child of Toolforge NFS | SQLite, pending originals, and thumbnails |
+| `APP_TEMP_DIR` | OS temp directory plus `globustut-uploader` | upload buffering and conversions |
+| `MAX_FILE_MB` | `200` | per-file input limit |
+| `MAX_REQUEST_MB` | `1000` | complete multipart request limit |
+| `MAX_FILES` | `20` | files per submission |
+| `MAX_PENDING_MB` | `20000` | total indexed moderation queue limit |
+| `DISK_RESERVE_MB` | `512` | required free filesystem reserve |
+| `MAX_PIXELS` | `250000000` | image decompression safety limit |
+| `REQUEST_TIMEOUT_SECONDS` | `900` | complete request deadline |
+| `SESSION_TTL_HOURS` | `12` | moderator session lifetime |
+| `NEARBY_RADIUS_METERS` | `10000` | Wikidata geographic search radius |
+| `NEARBY_CATEGORY_LIMIT` | `20` | result limit, always clamped to 20 |
+| `PUBLIC_BASE_URL` | inferred | public URL and secure-cookie default |
+
+SQLite uses one connection per blocking operation, full synchronous writes, and rollback journaling. The Toolforge service therefore runs exactly one replica. This is suitable for a low-volume moderation queue; move the database to ToolsDB before scaling replicas or write volume.
+
+Startup reconciliation removes unindexed files left by a prior crash. App-owned directories and the database use private filesystem permissions. Back up the SQLite file and `pending/` together while the webservice is stopped for a consistent manual snapshot.
+
+Category syntax is checked against the main MediaWiki title restrictions, but existence is not required because a Commons outage must not block intake. The autocomplete and current-category link let the moderator verify or create an intentional red-link category later.
+
+## Tests
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+npm ci
+npx playwright install chromium
+npm run test:e2e
+```
+
+The same checks run in [GitHub Actions](.github/workflows/ci.yml). Browser tests use a local Wikimedia API fixture, so sorting, the 20-category limit, autocomplete, and no-EXIF behavior are deterministic.
+
+## Toolforge deployment
+
+The Build Service template requests the largest normal web pod available to tools: 3 CPU and 6 GiB RAM. `mount: all` exposes persistent NFS, while conversion work uses the pod's larger ephemeral `/tmp`. Toolforge does not expose a per-service "largest storage" field; storage capacity and quotas are platform-managed.
+
+Deploy directly from this workstation:
+
+```bash
+TOOLFORGE_TOOL=YOUR_TOOL ./scripts/toolforge-deploy-local.sh
+```
+
+Or run the underlying script on a Toolforge bastion:
+
+```bash
+ssh login.toolforge.org
+become YOUR_TOOL
+git clone https://github.com/vitaly-zdanevich/globustut-uploader-to-commons.git source
+cd source
+./scripts/toolforge-deploy.sh
+```
+
+Both paths use the public repository as Build Service input, install `service.template`, build, start or restart the service, and wait for `/healthz`. The local wrapper only performs a fast-forward pull; it does not overwrite remote changes.
+
+Create the first local moderator inside the built image:
+
+```bash
+toolforge webservice shell
+cd /workspace
+./scripts/run-toolforge.sh user add moderator
+exit
+```
+
+Operational commands:
+
+```bash
+./scripts/toolforge-logs.sh
+toolforge webservice status
+toolforge webservice shell
+```
+
+Persistent state is kept under `/data/project/TOOL_NAME/globustut-uploader`. The runtime wrapper uses Toolforge's injected `TOOL_DATA_DIR`, and the app derives the tool name from that path so moderator cookies are `Secure` in production.
+
+## Deployment policy boundary
+
+Resolve these points with Toolforge administrators before enabling the public form:
+
+1. The current intake route is anonymous because that is the requested product flow. Toolforge's rules generally require users who publish content through a tool to be registered and validated. Confirm that private, premoderated staging qualifies, or add an accepted uploader-authentication mechanism. The local moderator password is not uploader validation.
+2. Pending images and EXIF GPS are private user data stored outside Commons. Publish a retention/privacy policy, limit moderator access, and delete rejected media promptly.
+3. The queue has a byte cap and disk reserve, but public intake still needs operational monitoring and a retention decision before launch.
+4. The form accepts only an asserted free license; moderation must still check authorship, privacy, Commons scope, and filename/category collisions before future publication.
+
+Relevant platform documentation: [Toolforge Build Service](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Build_service), [webservices](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Web), [Kubernetes storage](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Kubernetes), [Toolforge rules](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Rules), and [Wikimedia Cloud Services terms](https://wikitech.wikimedia.org/wiki/Cloud_Services_Terms_of_use).
+
+## License
+
+[MIT](LICENSE)

@@ -1,0 +1,41 @@
+[package]
+name = "globustut-uploader-to-commons"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Moderated photo intake for Globus Belarus and Wikimedia Commons"
+
+[dependencies]
+anyhow = "1"
+argon2 = "0.5"
+axum = { version = "0.8.9", features = ["macros", "multipart"] }
+base64 = "0.22"
+clap = { version = "4.6", features = ["derive"] }
+html-escape = "0.2"
+kamadak-exif = "0.5"
+nix = { version = "0.31", features = ["fs"] }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rpassword = "7"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+time = { version = "0.3", features = ["formatting", "macros"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower-http = { version = "0.6", features = ["catch-panic", "compression-gzip", "request-id", "timeout", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true

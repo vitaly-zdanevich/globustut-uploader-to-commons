@@ -1,0 +1,13 @@
+{
+  "name": "globustut-uploader-to-commons-e2e",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
