@@ -10,6 +10,7 @@ This MVP **does not upload anything to Wikimedia Commons**. It stores accepted f
 - content-based media detection instead of trusting browser MIME types or extensions;
 - unchanged storage for Commons-compatible JPEG, PNG, GIF, TIFF, and WebP files;
 - conversion of other images understood by libvips or ImageMagick to WebP;
+- DNG handling that extracts the largest decoder-valid JPEG preview exposed by ExifTool first, then develops the raw image with LibRaw and encodes it as WebP (with libvips/ImageMagick as a final fallback);
 - acceptance of already compatible WebM, Ogg Theora, and MPEG-1/2 video, with no video conversion;
 - EXIF capture date and GPS extraction, with an OpenStreetMap link in moderation;
 - local SQLite moderator accounts using Argon2id passwords and private sessions;
@@ -22,7 +23,7 @@ There is deliberately no OAuth code. Local login protects only `/admin`. A futur
 
 ## Image normalization
 
-Here, normalization means identifying the real image format, applying its orientation while converting, writing unsupported formats as Commons-compatible WebP, and generating a small moderation thumbnail. Already supported formats are preserved byte-for-byte, so JPEG photos are not needlessly recompressed.
+Here, normalization means identifying the real image format, applying its orientation while converting, writing unsupported formats as Commons-compatible WebP, and generating a small moderation thumbnail. Already supported formats are preserved byte-for-byte, so JPEG photos are not needlessly recompressed. For DNG, ExifTool identifies the format and extracts TIFF/DNG-referenced JPEG previews without scanning arbitrary raw bytes; the largest decoder-valid preview is preserved byte-for-byte when available. Otherwise the raw image is developed and encoded as WebP.
 
 The file chooser permits every extension because the server performs the actual validation. "Any format" means any still-image format decoded by the installed libvips/ImageMagick stack and within the configured size/pixel limits. Damaged files, documents, executables, and unsupported video codecs are rejected.
 

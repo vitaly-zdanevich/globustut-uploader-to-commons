@@ -5,18 +5,20 @@ use crate::db::{Database, UploadRecord};
 use anyhow::{Context, Result, bail};
 use exif::{In, Tag, Value};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 const WEBP_QUALITY: u8 = 92;
 const MAX_COMMONS_FILENAME_BYTES: usize = 240;
+const DNG_PREVIEW_TAGS: [&str; 3] = ["JpgFromRaw", "PreviewImage", "ThumbnailImage"];
 pub const FIXED_UPLOAD_LICENSE: &str = "cc-by-sa-4.0";
 
 #[derive(Clone)]
@@ -62,7 +64,14 @@ impl Drop for RemoveFileOnDrop {
 #[derive(Clone, Debug)]
 enum MediaProbe {
     Image(ImageProbe),
+    Dng(DngProbe),
     Video(VideoProbe),
+}
+
+#[derive(Clone, Debug)]
+struct DngProbe {
+    width: u32,
+    height: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -173,6 +182,30 @@ impl MediaProcessor {
                             metadata,
                         )
                     }
+                }
+                MediaProbe::Dng(dng) => {
+                    validate_dimensions(dng.width, dng.height, self.config.max_pixels)?;
+                    let metadata = extract_metadata(temporary_path).await;
+                    let _permit = self
+                        .conversion_slots
+                        .acquire()
+                        .await
+                        .context("conversion queue closed")?;
+                    let (source_path, image) = self
+                        .prepare_dng(temporary_path, &id, dng.width, dng.height)
+                        .await?;
+                    converted_cleanup = Some(RemoveFileOnDrop::new(source_path.clone()));
+                    validate_dimensions(image.width, image.height, self.config.max_pixels)?;
+                    (
+                        source_path,
+                        image.extension,
+                        image.mime_type,
+                        "image",
+                        true,
+                        Some(image.width),
+                        Some(image.height),
+                        metadata,
+                    )
                 }
                 MediaProbe::Video(video) => (
                     temporary_path.to_path_buf(),
@@ -285,19 +318,7 @@ impl MediaProcessor {
     }
 
     pub async fn disk_space(&self) -> Result<DiskSpace> {
-        let path = self.config.upload_dir.clone();
-        tokio::task::spawn_blocking(move || {
-            let stats = nix::sys::statvfs::statvfs(&path)
-                .with_context(|| format!("failed to read free space for {}", path.display()))?;
-            Ok(DiskSpace {
-                available_bytes: stats
-                    .blocks_available()
-                    .saturating_mul(stats.fragment_size()),
-                total_bytes: stats.blocks().saturating_mul(stats.fragment_size()),
-            })
-        })
-        .await
-        .context("disk-space worker stopped unexpectedly")?
+        disk_space_at(self.config.upload_dir.clone()).await
     }
 
     async fn ensure_disk_space(&self, incoming_bytes: u64) -> Result<()> {
@@ -312,7 +333,24 @@ impl MediaProcessor {
         Ok(())
     }
 
+    async fn ensure_temp_disk_space(&self, incoming_bytes: u64) -> Result<()> {
+        let available = disk_space_at(self.config.temp_dir.clone())
+            .await?
+            .available_bytes;
+        let required = self
+            .config
+            .disk_reserve_bytes
+            .saturating_add(incoming_bytes);
+        if available < required {
+            bail!("not enough temporary storage is available to develop this DNG");
+        }
+        Ok(())
+    }
+
     async fn probe(&self, path: &Path) -> Result<MediaProbe> {
+        if let Some(dng) = self.probe_dng(path).await? {
+            return Ok(MediaProbe::Dng(dng));
+        }
         match self.probe_image(path).await {
             Ok(image) => Ok(MediaProbe::Image(image)),
             Err(image_error) => {
@@ -350,6 +388,238 @@ impl MediaProcessor {
             identity.width,
             identity.height,
         ))
+    }
+
+    async fn probe_dng(&self, path: &Path) -> Result<Option<DngProbe>> {
+        if !has_tiff_family_header(path).await {
+            return Ok(None);
+        }
+        let text = match command_text(
+            "exiftool",
+            [
+                OsStr::new("-json"),
+                OsStr::new("-n"),
+                OsStr::new("-G1"),
+                OsStr::new("-a"),
+                OsStr::new("-FileType"),
+                OsStr::new("-ImageWidth"),
+                OsStr::new("-ImageHeight"),
+                path.as_os_str(),
+            ],
+            self.config.conversion_timeout_seconds.min(30),
+        )
+        .await
+        {
+            Ok(text) => text,
+            Err(_) => return Ok(None),
+        };
+        let mut records: Vec<HashMap<String, serde_json::Value>> =
+            serde_json::from_str(&text).context("ExifTool returned invalid DNG probe JSON")?;
+        let Some(record) = records.pop() else {
+            return Ok(None);
+        };
+        let file_type = record.iter().find_map(|(key, value)| {
+            exiftool_tag_name(key)
+                .eq_ignore_ascii_case("FileType")
+                .then(|| value.as_str())
+                .flatten()
+        });
+        if !file_type.is_some_and(|value| value.eq_ignore_ascii_case("DNG")) {
+            return Ok(None);
+        }
+        let mut dimensions = HashMap::<String, (Option<u32>, Option<u32>)>::new();
+        for (key, value) in &record {
+            let (group, tag) = exiftool_group_and_tag(key);
+            let dimension = dimensions.entry(group.to_string()).or_default();
+            if tag.eq_ignore_ascii_case("ImageWidth") {
+                dimension.0 = json_u32(value);
+            } else if tag.eq_ignore_ascii_case("ImageHeight") {
+                dimension.1 = json_u32(value);
+            }
+        }
+        let (width, height) = dimensions
+            .into_values()
+            .filter_map(|(width, height)| Some((width?, height?)))
+            .max_by_key(|(width, height)| u64::from(*width) * u64::from(*height))
+            .context("DNG has no valid image dimensions")?;
+        Ok(Some(DngProbe { width, height }))
+    }
+
+    async fn prepare_dng(
+        &self,
+        input: &Path,
+        id: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<(PathBuf, ImageProbe)> {
+        let preview_timeout = Duration::from_secs(
+            self.config
+                .conversion_timeout_seconds
+                .saturating_div(4)
+                .clamp(1, 15),
+        );
+        tokio::time::timeout(
+            Duration::from_secs(self.config.conversion_timeout_seconds.saturating_mul(3)),
+            self.prepare_dng_inner(input, id, width, height, preview_timeout),
+        )
+        .await
+        .context("DNG preparation timed out")?
+    }
+
+    async fn prepare_dng_inner(
+        &self,
+        input: &Path,
+        id: &str,
+        width: u32,
+        height: u32,
+        preview_timeout: Duration,
+    ) -> Result<(PathBuf, ImageProbe)> {
+        match tokio::time::timeout(preview_timeout, self.extract_best_dng_preview(input, id)).await
+        {
+            Ok(Ok(Some(preview))) => return Ok(preview),
+            Ok(Ok(None)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(error = %format!("{error:#}"), "DNG preview extraction failed; developing raw image");
+            }
+            Err(_) => {
+                tracing::warn!("DNG preview extraction timed out; developing raw image");
+            }
+        }
+
+        let output = self.config.temp_dir.join(format!("{id}.webp"));
+        let mut cleanup = RemoveFileOnDrop::new(output.clone());
+        if let Err(libraw_error) = self
+            .convert_dng_with_libraw(input, &output, width, height)
+            .await
+        {
+            tokio::fs::remove_file(&output).await.ok();
+            self.convert_image(input, &output, false)
+                .await
+                .with_context(|| format!("LibRaw DNG conversion failed first: {libraw_error:#}"))?;
+        }
+        let probe = self
+            .probe_image(&output)
+            .await
+            .context("failed to inspect converted DNG")?;
+        if probe.mime_type != "image/webp" {
+            bail!("DNG converter did not produce WebP");
+        }
+        cleanup.disarm();
+        Ok((output, probe))
+    }
+
+    async fn extract_best_dng_preview(
+        &self,
+        input: &Path,
+        id: &str,
+    ) -> Result<Option<(PathBuf, ImageProbe)>> {
+        let output = self.config.temp_dir.join(format!("{id}.jpg"));
+        let candidate = self.config.temp_dir.join(format!("{id}.dng-preview.jpg"));
+        let mut output_cleanup = RemoveFileOnDrop::new(output.clone());
+        let mut best: Option<(ImageProbe, (u64, u64))> = None;
+
+        for tag in DNG_PREVIEW_TAGS {
+            let candidate_cleanup = RemoveFileOnDrop::new(candidate.clone());
+            let extracted = self.extract_dng_preview_tag(input, &candidate, tag).await;
+            if let Err(error) = &extracted {
+                tracing::warn!(tag, error = %format!("{error:#}"), "could not extract DNG preview tag");
+            }
+            if !extracted.unwrap_or(false) {
+                continue;
+            }
+
+            let Ok(probe) = self.probe_image(&candidate).await else {
+                continue;
+            };
+            if probe.mime_type != "image/jpeg"
+                || validate_dimensions(probe.width, probe.height, self.config.max_pixels).is_err()
+                || command_text(
+                    "vips",
+                    [OsStr::new("avg"), candidate.as_os_str()],
+                    self.config.conversion_timeout_seconds.min(15),
+                )
+                .await
+                .is_err()
+            {
+                continue;
+            }
+
+            let size = tokio::fs::metadata(&candidate)
+                .await
+                .context("failed to inspect extracted DNG preview")?
+                .len();
+            let score = (u64::from(probe.width) * u64::from(probe.height), size);
+            if best
+                .as_ref()
+                .is_none_or(|(_, best_score)| score > *best_score)
+            {
+                tokio::fs::rename(&candidate, &output)
+                    .await
+                    .context("failed to select extracted DNG preview")?;
+                best = Some((probe, score));
+            }
+            drop(candidate_cleanup);
+        }
+
+        if let Some((probe, _)) = best {
+            output_cleanup.disarm();
+            Ok(Some((output, probe)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn extract_dng_preview_tag(
+        &self,
+        input: &Path,
+        output: &Path,
+        tag: &str,
+    ) -> Result<bool> {
+        let file = create_private_file(output).await?.into_std().await;
+        let mut command = Command::new("exiftool");
+        command
+            .arg("-b")
+            .arg(format!("-{tag}"))
+            .arg(input)
+            .stdout(Stdio::from(file));
+        run_command_with_redirected_stdout(command, self.config.conversion_timeout_seconds.min(15))
+            .await?;
+        Ok(nonempty_file(output).await)
+    }
+
+    async fn convert_dng_with_libraw(
+        &self,
+        input: &Path,
+        output: &Path,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        let raw_bytes = u64::from(width)
+            .saturating_mul(u64::from(height))
+            .saturating_mul(6);
+        self.ensure_temp_disk_space(raw_bytes).await?;
+        let raw_path = output.with_extension("raw.ppm");
+        let _raw_cleanup = RemoveFileOnDrop::new(raw_path.clone());
+        let raw_file = create_private_file(&raw_path).await?.into_std().await;
+        let mut command = Command::new("dcraw_emu");
+        command
+            .arg("-w")
+            .arg("-q")
+            .arg("3")
+            .arg("-o")
+            .arg("1")
+            .arg("-c")
+            .arg(input)
+            .stdout(Stdio::from(raw_file));
+        run_command_with_redirected_stdout(command, self.config.conversion_timeout_seconds)
+            .await
+            .context("LibRaw could not develop DNG")?;
+        if !nonempty_file(&raw_path).await {
+            bail!("LibRaw wrote an empty DNG image");
+        }
+        self.convert_image(&raw_path, output, false)
+            .await
+            .context("failed to encode LibRaw DNG output as WebP")
     }
 
     async fn convert_image(&self, input: &Path, output: &Path, lossless: bool) -> Result<()> {
@@ -839,6 +1109,21 @@ struct ExifToolRecord {
     capture_date: Option<String>,
 }
 
+fn exiftool_group_and_tag(key: &str) -> (&str, &str) {
+    key.rsplit_once(':').unwrap_or(("", key))
+}
+
+fn exiftool_tag_name(key: &str) -> &str {
+    exiftool_group_and_tag(key).1
+}
+
+fn json_u32(value: &serde_json::Value) -> Option<u32> {
+    value
+        .as_u64()
+        .and_then(|number| u32::try_from(number).ok())
+        .or_else(|| value.as_str()?.parse().ok())
+}
+
 async fn extract_with_exiftool(path: &Path) -> Result<ImageMetadata> {
     let text = command_text(
         "exiftool",
@@ -1023,6 +1308,26 @@ async fn run_command(mut command: Command, timeout_seconds: u64) -> Result<std::
         .await
         .context("media tool timed out")?
         .context("failed to start media tool")?;
+    ensure_command_succeeded(output)
+}
+
+async fn run_command_with_redirected_stdout(
+    mut command: Command,
+    timeout_seconds: u64,
+) -> Result<std::process::Output> {
+    command.kill_on_drop(true).stderr(Stdio::piped());
+    let child = command.spawn().context("failed to start media tool")?;
+    let output = tokio::time::timeout(
+        Duration::from_secs(timeout_seconds),
+        child.wait_with_output(),
+    )
+    .await
+    .context("media tool timed out")?
+    .context("failed to wait for media tool")?;
+    ensure_command_succeeded(output)
+}
+
+fn ensure_command_succeeded(output: std::process::Output) -> Result<std::process::Output> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
@@ -1038,6 +1343,30 @@ async fn nonempty_file(path: &Path) -> bool {
     tokio::fs::metadata(path)
         .await
         .is_ok_and(|metadata| metadata.len() > 0)
+}
+
+async fn has_tiff_family_header(path: &Path) -> bool {
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
+        return false;
+    };
+    let mut header = [0_u8; 4];
+    file.read_exact(&mut header).await.is_ok()
+        && matches!(&header, b"II*\0" | b"MM\0*" | b"II+\0" | b"MM\0+")
+}
+
+async fn disk_space_at(path: PathBuf) -> Result<DiskSpace> {
+    tokio::task::spawn_blocking(move || {
+        let stats = nix::sys::statvfs::statvfs(&path)
+            .with_context(|| format!("failed to read free space for {}", path.display()))?;
+        Ok(DiskSpace {
+            available_bytes: stats
+                .blocks_available()
+                .saturating_mul(stats.fragment_size()),
+            total_bytes: stats.blocks().saturating_mul(stats.fragment_size()),
+        })
+    })
+    .await
+    .context("disk-space worker stopped unexpectedly")?
 }
 
 async fn remove_unreferenced_files(directory: &Path, expected: &HashSet<String>) -> Result<usize> {
@@ -1074,10 +1403,17 @@ async fn remove_stale_temporary_files(directory: &Path) -> Result<usize> {
         let upload_buffer = name
             .strip_prefix("upload-")
             .is_some_and(|id| Uuid::parse_str(id).is_ok());
-        let converted = name
-            .strip_suffix(".webp")
+        let prepared = [".webp", ".jpg"].iter().any(|suffix| {
+            name.strip_suffix(suffix)
+                .is_some_and(|id| Uuid::parse_str(id).is_ok())
+        });
+        let raw_development = name
+            .strip_suffix(".raw.ppm")
             .is_some_and(|id| Uuid::parse_str(id).is_ok());
-        if upload_buffer || converted {
+        let dng_preview = name
+            .strip_suffix(".dng-preview.jpg")
+            .is_some_and(|id| Uuid::parse_str(id).is_ok());
+        if upload_buffer || prepared || raw_development || dng_preview {
             tokio::fs::remove_file(entry.path())
                 .await
                 .with_context(|| format!("failed to remove stale {}", entry.path().display()))?;
