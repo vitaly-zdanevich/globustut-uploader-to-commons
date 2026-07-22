@@ -108,7 +108,7 @@ The Build Service template requests the largest normal web pod available to tool
 Deploy directly from this workstation:
 
 ```bash
-TOOLFORGE_TOOL=globustut-uploader-to-commons ./scripts/toolforge-deploy-local.sh
+./scripts/toolforge-deploy-local.sh
 ```
 
 Or run the underlying script on a Toolforge bastion:
