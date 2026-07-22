@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 const WEBP_QUALITY: u8 = 92;
 const MAX_COMMONS_FILENAME_BYTES: usize = 240;
+pub const FIXED_UPLOAD_LICENSE: &str = "cc-by-sa-4.0";
 
 #[derive(Clone)]
 pub struct MediaProcessor {
@@ -96,7 +97,6 @@ impl MediaProcessor {
         temporary_path: &Path,
         original_filename: &str,
         commons_category: &str,
-        license: &str,
     ) -> Result<UploadRecord> {
         let original_size_bytes = tokio::fs::metadata(temporary_path)
             .await
@@ -123,7 +123,6 @@ impl MediaProcessor {
 
         let probe = self.probe(temporary_path).await?;
         let category = validate_category(commons_category)?;
-        let license = validate_license(license)?;
         let id = Uuid::new_v4().to_string();
         let mut converted_cleanup = None;
 
@@ -222,7 +221,7 @@ impl MediaProcessor {
             longitude: metadata.longitude,
             capture_date: metadata.capture_date,
             commons_category: category,
-            license,
+            license: FIXED_UPLOAD_LICENSE.to_string(),
             uploader_username: "anonymous".into(),
             created_at: now_ts(),
         };
@@ -515,13 +514,6 @@ pub fn display_basename(filename: &str) -> &str {
         .rsplit_once('.')
         .map(|(basename, _)| basename)
         .unwrap_or(filename)
-}
-
-fn validate_license(raw: &str) -> Result<String> {
-    match raw {
-        "cc-by-sa-4.0" | "cc-by-4.0" | "cc0" => Ok(raw.to_string()),
-        _ => bail!("invalid free license"),
-    }
 }
 
 fn validate_dimensions(width: u32, height: u32, max_pixels: u64) -> Result<()> {

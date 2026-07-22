@@ -148,8 +148,6 @@ async fn upload(
     let mut pending = Vec::new();
     let mut cleanup = TemporaryFiles(Vec::new());
     let mut category = None;
-    let mut license = None;
-    let mut rights_confirmed = false;
 
     while let Some(mut field) = multipart
         .next_field()
@@ -183,11 +181,10 @@ async fn upload(
             "category" => {
                 category = Some(read_small_field(&mut field).await?);
             }
-            "license" => {
-                license = Some(read_small_field(&mut field).await?);
-            }
-            "rights_confirmed" => {
-                rights_confirmed = read_small_field(&mut field).await? == "yes";
+            // Old copies of the form may still submit these fields. The server always
+            // assigns its fixed license, regardless of either legacy value.
+            "license" | "rights_confirmed" => {
+                let _ = read_small_field(&mut field).await?;
             }
             _ => return Err(AppError::bad_request("Форма содержит неизвестное поле.")),
         }
@@ -195,18 +192,12 @@ async fn upload(
     if pending.is_empty() {
         return Err(AppError::bad_request("Выберите хотя бы один файл."));
     }
-    if !rights_confirmed {
-        return Err(AppError::bad_request(
-            "Необходимо подтвердить право на свободную публикацию.",
-        ));
-    }
     let category = category.unwrap_or_default();
-    let license = license.unwrap_or_default();
     let mut results = Vec::with_capacity(pending.len());
     for file in pending {
         match state
             .media
-            .ingest(&file.path, &file.filename, &category, &license)
+            .ingest(&file.path, &file.filename, &category)
             .await
         {
             Ok(record) => results.push(SubmissionResult {
@@ -623,8 +614,6 @@ fn public_media_error(error: &anyhow::Error) -> String {
         "На сервере недостаточно свободного места.".into()
     } else if message.contains("queue") {
         "Очередь премодерации заполнена. Попробуйте позже.".into()
-    } else if message.contains("license") {
-        "Не выбрана допустимая свободная лицензия.".into()
     } else if message.contains("category") {
         "Укажите категорию Wikimedia Commons.".into()
     } else if message.contains("conversion") {

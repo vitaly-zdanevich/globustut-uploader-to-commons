@@ -1,7 +1,7 @@
 mod support;
 
 use globustut_uploader_to_commons::db::Database;
-use globustut_uploader_to_commons::media::MediaProcessor;
+use globustut_uploader_to_commons::media::{FIXED_UPLOAD_LICENSE, MediaProcessor};
 use std::sync::Arc;
 
 #[tokio::test]
@@ -34,18 +34,14 @@ async fn preserves_supported_jpeg_bytes_and_extracts_exif_gps() {
     let original = std::fs::read(&source).unwrap();
 
     let upload = processor
-        .ingest(
-            &source,
-            "Minsk photo.JPG",
-            "Category:Buildings_in_Minsk",
-            "cc-by-sa-4.0",
-        )
+        .ingest(&source, "Minsk photo.JPG", "Category:Buildings_in_Minsk")
         .await
         .unwrap();
 
     assert!(!upload.converted);
     assert_eq!(upload.display_filename, "Minsk photo.jpg");
     assert_eq!(upload.commons_category, "Buildings in Minsk");
+    assert_eq!(upload.license, FIXED_UPLOAD_LICENSE);
     assert_eq!(upload.capture_date.as_deref(), Some("2025-07-18"));
     assert!((upload.latitude.unwrap() - 53.9045).abs() < 0.0001);
     assert!((upload.longitude.unwrap() - 27.5615).abs() < 0.0001);
@@ -72,7 +68,7 @@ async fn converts_bmp_to_commons_compatible_webp() {
             .arg(&source),
     );
     let upload = processor
-        .ingest(&source, "camera.BMP", "Belarus", "cc0")
+        .ingest(&source, "camera.BMP", "Belarus")
         .await
         .unwrap();
 
@@ -96,7 +92,7 @@ async fn rejects_non_media_content() {
     std::fs::write(&source, b"not an image or video").unwrap();
 
     let error = processor
-        .ingest(&source, "fake.jpg", "Belarus", "cc0")
+        .ingest(&source, "fake.jpg", "Belarus")
         .await
         .unwrap_err();
     assert!(error.to_string().contains("unsupported or invalid"));
@@ -118,7 +114,7 @@ async fn startup_cleanup_removes_orphans_but_preserves_indexed_media() {
             .arg(&source),
     );
     let upload = processor
-        .ingest(&source, "kept.jpg", "Belarus", "cc0")
+        .ingest(&source, "kept.jpg", "Belarus")
         .await
         .unwrap();
     let kept_media = processor.stored_path(&upload).unwrap();

@@ -4,6 +4,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use globustut_uploader_to_commons::auth::{hash_password, now_ts};
 use globustut_uploader_to_commons::db::Database;
+use globustut_uploader_to_commons::media::FIXED_UPLOAD_LICENSE;
 use globustut_uploader_to_commons::web::{AppState, router};
 use http_body_util::BodyExt;
 use std::sync::Arc;
@@ -59,6 +60,7 @@ async fn upload_login_rename_category_and_delete_workflow() {
     let upload = db.list_uploads(10, 0).await.unwrap().pop().unwrap();
     assert_eq!(upload.commons_category, "Castles in Belarus");
     assert_eq!(upload.display_filename, "castle.jpg");
+    assert_eq!(upload.license, FIXED_UPLOAD_LICENSE);
 
     let response = app
         .clone()
@@ -190,8 +192,6 @@ fn multipart_upload(boundary: &str, jpeg: &[u8]) -> Vec<u8> {
         "category",
         "Category:Castles_in_Belarus",
     );
-    add_text_part(&mut body, boundary, "license", "cc-by-sa-4.0");
-    add_text_part(&mut body, boundary, "rights_confirmed", "yes");
     body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
     body
 }

@@ -38,6 +38,8 @@ test('public upload and moderation workflow', async ({ page }, testInfo) => {
 
   await page.goto('/?category=Castles_in_Belarus');
   await expect(page.getByRole('heading', { name: 'Добавить фотографии' })).toBeVisible();
+  await expect(page.getByText(/CC BY-SA 4\.0/)).toBeVisible();
+  await expect(page.locator('input[name=license], input[name=rights_confirmed]')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const publicCategory = page.getByRole('combobox', { name: 'Категория Wikimedia Commons' });
   await publicCategory.fill('Castl');
@@ -51,7 +53,6 @@ test('public upload and moderation workflow', async ({ page }, testInfo) => {
     buffer: readFileSync(gpsPhoto),
   });
   await expect(page.getByText(`castle-${suffix}.jpg`)).toBeVisible();
-  await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Отправить на премодерацию' }).click();
   await expect(page.getByRole('heading', { name: 'Принято файлов: 1' })).toBeVisible();
 
@@ -105,7 +106,6 @@ test('public upload and moderation workflow', async ({ page }, testInfo) => {
     buffer: readFileSync(plainPhoto),
   });
   await page.getByRole('combobox', { name: 'Категория Wikimedia Commons' }).fill('Belarus');
-  await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Отправить на премодерацию' }).click();
   await page.goto('/admin');
   const noGpsCard = page.locator('.moderation-item').first();

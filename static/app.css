@@ -238,12 +238,6 @@ h2 {
   color: var(--danger);
 }
 
-.form-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(190px, 0.8fr);
-  gap: 1rem;
-}
-
 .field,
 .inline-form label {
   display: grid;
@@ -318,21 +312,15 @@ h2 {
   color: #666;
 }
 
-.rights-check {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
-  align-items: start;
-  gap: 0.65rem;
+.license-note {
+  margin: 0;
   color: var(--muted);
   font-size: 0.78rem;
   line-height: 1.5;
 }
 
-.rights-check input {
-  width: 18px;
-  height: 18px;
-  margin: 0.1rem 0 0;
-  accent-color: var(--accent);
+.license-note strong {
+  color: var(--text);
 }
 
 .form-actions {
@@ -772,10 +760,6 @@ h2 {
   .upload-shell {
     padding-right: 16px;
     padding-left: 16px;
-  }
-
-  .form-grid {
-    grid-template-columns: 1fr;
   }
 
   .admin-header {

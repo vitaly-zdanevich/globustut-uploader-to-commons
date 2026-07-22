@@ -1,6 +1,6 @@
 use crate::db::UploadRecord;
 use crate::media::{DiskSpace, display_basename};
-use html_escape::{encode_double_quoted_attribute, encode_text};
+use html_escape::{encode_quoted_attribute, encode_text};
 
 #[derive(Clone, Debug)]
 pub struct SubmissionResult {
@@ -13,45 +13,32 @@ pub fn upload_page(initial_category: &str, max_files: usize, max_file_mb: u64) -
     let category = attribute(initial_category);
     let body = format!(
         r#"
-        <main class="upload-shell">
-          <header class="brand-header">
-            <img src="/static/favicon.svg" width="44" height="44" alt="">
+        <main class='upload-shell'>
+          <header class='brand-header'>
+            <img src='/static/favicon.svg' width='44' height='44' alt=''>
             <div><strong>Глобус Беларуси</strong><span>Фотографии для Wikimedia Commons</span></div>
           </header>
-          <section class="upload-workspace" aria-labelledby="upload-title">
-            <div class="section-heading">
-              <p class="eyebrow">Новая публикация</p>
-              <h1 id="upload-title">Добавить фотографии</h1>
+          <section class='upload-workspace' aria-labelledby='upload-title'>
+            <div class='section-heading'>
+              <p class='eyebrow'>Новая публикация</p>
+              <h1 id='upload-title'>Добавить фотографии</h1>
             </div>
-            <form class="upload-form" action="/upload" method="post" enctype="multipart/form-data" data-upload-form>
-              <label class="file-drop" data-file-drop>
-                <input type="file" name="files" multiple required data-file-input>
-                <span class="file-drop-title">Выбрать файлы</span>
-                <span class="file-drop-meta">До {max_files} файлов, каждый до {max_file_mb} МБ</span>
+            <form class='upload-form' action='/upload' method='post' enctype='multipart/form-data' data-upload-form>
+              <label class='file-drop' data-file-drop>
+                <input type='file' name='files' multiple required data-file-input>
+                <span class='file-drop-title'>Выбрать файлы</span>
+                <span class='file-drop-meta'>До {max_files} файлов, каждый до {max_file_mb} МБ</span>
               </label>
-              <div class="selected-files" data-selected-files aria-live="polite"></div>
-              <div class="form-grid">
-                <div class="field category-field">
-                  <label for="upload-category">Категория Wikimedia Commons</label>
-                  <input id="upload-category" type="text" name="category" value="{category}" maxlength="255" required autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="upload-category-menu" aria-expanded="false" data-category-input>
-                  <div id="upload-category-menu" class="category-menu" role="listbox" data-category-menu hidden></div>
-                </div>
-                <label class="field">
-                  <span>Свободная лицензия</span>
-                  <select name="license" required>
-                    <option value="cc-by-sa-4.0">CC BY-SA 4.0</option>
-                    <option value="cc-by-4.0">CC BY 4.0</option>
-                    <option value="cc0">CC0</option>
-                  </select>
-                </label>
+              <div class='selected-files' data-selected-files aria-live='polite'></div>
+              <div class='field category-field'>
+                <label for='upload-category'>Категория Wikimedia Commons</label>
+                <input id='upload-category' type='text' name='category' value='{category}' maxlength='255' required autocomplete='off' spellcheck='false' role='combobox' aria-autocomplete='list' aria-haspopup='listbox' aria-controls='upload-category-menu' aria-expanded='false' data-category-input>
+                <div id='upload-category-menu' class='category-menu' role='listbox' data-category-menu hidden></div>
               </div>
-              <label class="rights-check">
-                <input type="checkbox" name="rights_confirmed" value="yes" required>
-                <span>У меня есть право опубликовать эти файлы под выбранной свободной лицензией.</span>
-              </label>
-              <div class="form-actions">
-                <button class="primary-button" type="submit" data-submit>Отправить на премодерацию</button>
-                <span class="submit-status" data-submit-status aria-live="polite"></span>
+              <p class='license-note'>Отправляя файлы, вы подтверждаете право опубликовать их на условиях <strong>CC BY-SA 4.0</strong>.</p>
+              <div class='form-actions'>
+                <button class='primary-button' type='submit' data-submit>Отправить на премодерацию</button>
+                <span class='submit-status' data-submit-status aria-live='polite'></span>
               </div>
             </form>
           </section>
@@ -361,7 +348,7 @@ fn text(value: &str) -> String {
 }
 
 fn attribute(value: &str) -> String {
-    encode_double_quoted_attribute(value).into_owned()
+    encode_quoted_attribute(value).into_owned()
 }
 
 fn format_size(bytes: u64) -> String {

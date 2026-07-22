@@ -6,7 +6,7 @@ This MVP **does not upload anything to Wikimedia Commons**. It stores accepted f
 
 ## Included in the MVP
 
-- public multi-file intake with a required Commons category and free-license declaration;
+- public multi-file intake with a required Commons category and a fixed CC BY-SA 4.0 license;
 - content-based media detection instead of trusting browser MIME types or extensions;
 - unchanged storage for Commons-compatible JPEG, PNG, GIF, TIFF, and WebP files;
 - conversion of other images understood by libvips or ImageMagick to WebP;
@@ -47,8 +47,10 @@ cargo run -- serve
 Open `http://127.0.0.1:8000/` for upload and `http://127.0.0.1:8000/admin` for moderation. The source site can prefill a category:
 
 ```text
-https://TOOLNAME.toolforge.org/?category=Castles_in_Belarus
+https://globustut-uploader-to-commons.toolforge.org/?category=Castles_in_Belarus
 ```
+
+Direct multipart clients submit repeated `files` fields plus one `category` field. They do not submit a license or rights-confirmation field: the server records every accepted upload as CC BY-SA 4.0.
 
 Account commands operate on the configured SQLite database:
 
@@ -106,14 +108,14 @@ The Build Service template requests the largest normal web pod available to tool
 Deploy directly from this workstation:
 
 ```bash
-TOOLFORGE_TOOL=YOUR_TOOL ./scripts/toolforge-deploy-local.sh
+TOOLFORGE_TOOL=globustut-uploader-to-commons ./scripts/toolforge-deploy-local.sh
 ```
 
 Or run the underlying script on a Toolforge bastion:
 
 ```bash
 ssh login.toolforge.org
-become YOUR_TOOL
+become globustut-uploader-to-commons
 git clone https://github.com/vitaly-zdanevich/globustut-uploader-to-commons.git source
 cd source
 ./scripts/toolforge-deploy.sh
@@ -147,7 +149,7 @@ Resolve these points with Toolforge administrators before enabling the public fo
 1. The current intake route is anonymous because that is the requested product flow. Toolforge's rules generally require users who publish content through a tool to be registered and validated. Confirm that private, premoderated staging qualifies, or add an accepted uploader-authentication mechanism. The local moderator password is not uploader validation.
 2. Pending images and EXIF GPS are private user data stored outside Commons. Publish a retention/privacy policy, limit moderator access, and delete rejected media promptly.
 3. The queue has a byte cap and disk reserve, but public intake still needs operational monitoring and a retention decision before launch.
-4. The form accepts only an asserted free license; moderation must still check authorship, privacy, Commons scope, and filename/category collisions before future publication.
+4. The server assigns CC BY-SA 4.0 to every upload; moderation must still check authorship, permission, privacy, Commons scope, and filename/category collisions before future publication.
 
 Relevant platform documentation: [Toolforge Build Service](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Build_service), [webservices](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Web), [Kubernetes storage](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Kubernetes), [Toolforge rules](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Rules), and [Wikimedia Cloud Services terms](https://wikitech.wikimedia.org/wiki/Cloud_Services_Terms_of_use).
 
