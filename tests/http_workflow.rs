@@ -175,17 +175,65 @@ async fn upload_login_rename_category_and_delete_workflow() {
     assert!(!config.upload_dir.join(upload.stored_filename).exists());
 }
 
-fn multipart_upload(boundary: &str, jpeg: &[u8]) -> Vec<u8> {
-    let mut body = Vec::new();
-    add_part_header(
-        &mut body,
+#[tokio::test]
+async fn rejects_excess_combined_file_payload_and_cleans_buffers() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = support::test_config(root.path());
+    config.max_file_bytes = 700 * 1024;
+    config.max_request_bytes = 1024 * 1024;
+    config.max_files = 2;
+    let config = Arc::new(config);
+    config.prepare_directories().unwrap();
+    let db = Database::new(&config.database_path);
+    db.initialize().await.unwrap();
+    let app = router(AppState::new(config.clone(), db.clone()).unwrap());
+
+    let first = vec![b'a'; 600 * 1024];
+    let second = vec![b'b'; 600 * 1024];
+    let boundary = "globustut-size-boundary";
+    let multipart = multipart_upload_many(
         boundary,
-        "files",
-        Some("castle.jpg"),
-        Some("image/jpeg"),
+        &[
+            ("first.jpg", first.as_slice()),
+            ("second.jpg", second.as_slice()),
+        ],
     );
-    body.extend_from_slice(jpeg);
-    body.extend_from_slice(b"\r\n");
+    let response = app
+        .oneshot(
+            Request::post("/upload")
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(multipart))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(body_text(response).await.contains("Общий размер файлов"));
+    assert!(db.list_uploads(10, 0).await.unwrap().is_empty());
+    assert_eq!(std::fs::read_dir(&config.temp_dir).unwrap().count(), 0);
+}
+
+fn multipart_upload(boundary: &str, jpeg: &[u8]) -> Vec<u8> {
+    multipart_upload_many(boundary, &[("castle.jpg", jpeg)])
+}
+
+fn multipart_upload_many(boundary: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    for (filename, bytes) in files {
+        add_part_header(
+            &mut body,
+            boundary,
+            "files",
+            Some(filename),
+            Some("image/jpeg"),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+    }
     add_text_part(
         &mut body,
         boundary,

@@ -34,6 +34,11 @@ body {
   letter-spacing: 0;
 }
 
+body.upload-page {
+  display: flex;
+  flex-direction: column;
+}
+
 button,
 input,
 select {
@@ -131,6 +136,22 @@ h2 {
   background: var(--surface);
 }
 
+.upload-page .upload-shell {
+  flex: 1;
+  min-height: 0;
+}
+
+.upload-footer {
+  width: min(100%, 800px);
+  margin: 0 auto;
+  padding: 1rem 24px 1.35rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .upload-workspace {
   padding-top: clamp(28px, 6vh, 64px);
 }
@@ -219,6 +240,21 @@ h2 {
   color: var(--muted);
 }
 
+.file-error {
+  margin: -0.75rem 0 0;
+  padding: 0.55rem 0.65rem;
+  border-left: 3px solid var(--danger);
+  background: #fff1f0;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.file-error[hidden] {
+  display: none;
+}
+
 .icon-button {
   display: inline-grid;
   width: 30px;
@@ -265,6 +301,71 @@ h2 {
 
 .category-field {
   position: relative;
+}
+
+.category-chip {
+  display: inline-flex;
+  align-items: center;
+  align-self: start;
+  gap: 0.55rem;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 38px;
+  padding: 0.25rem 0.3rem 0.25rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 400;
+}
+
+.category-chip[hidden] {
+  display: none;
+}
+
+.category-chip-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.category-chip-actions {
+  display: inline-flex;
+  flex: none;
+  gap: 0.1rem;
+}
+
+.category-chip-link,
+.category-chip-remove {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  line-height: 1;
+  text-decoration: none;
+}
+
+.category-chip-link:hover,
+.category-chip-remove:hover {
+  background: var(--surface-3);
+}
+
+.category-chip-remove {
+  color: var(--muted);
+  font-size: 1.25rem;
+}
+
+.category-chip-remove:hover {
+  color: var(--danger);
+}
+
+.category-field input[hidden] {
+  display: none;
 }
 
 .category-menu {
@@ -762,6 +863,11 @@ h2 {
     padding-left: 16px;
   }
 
+  .upload-footer {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
   .admin-header {
     padding: 0 14px;
   }
@@ -915,6 +1021,7 @@ h2 {
   }
 
   .form-error,
+  .file-error,
   .delete-button:hover {
     background: #3c100d;
     color: #ffb3ad;

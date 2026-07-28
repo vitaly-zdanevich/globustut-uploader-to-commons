@@ -18,8 +18,9 @@ use uuid::Uuid;
 
 const WEBP_QUALITY: u8 = 92;
 const MAX_COMMONS_FILENAME_BYTES: usize = 240;
+const MAX_AUTHOR_BYTES: usize = 255;
 const DNG_PREVIEW_TAGS: [&str; 3] = ["JpgFromRaw", "PreviewImage", "ThumbnailImage"];
-pub const FIXED_UPLOAD_LICENSE: &str = "cc-by-sa-4.0";
+pub const FIXED_UPLOAD_LICENSE: &str = "cc-by-4.0";
 
 #[derive(Clone)]
 pub struct MediaProcessor {
@@ -39,6 +40,7 @@ struct ImageMetadata {
     latitude: Option<f64>,
     longitude: Option<f64>,
     capture_date: Option<String>,
+    author: Option<String>,
 }
 
 struct RemoveFileOnDrop(Option<PathBuf>);
@@ -253,6 +255,7 @@ impl MediaProcessor {
             latitude: metadata.latitude,
             longitude: metadata.longitude,
             capture_date: metadata.capture_date,
+            author: metadata.author,
             commons_category: category,
             license: FIXED_UPLOAD_LICENSE.to_string(),
             uploader_username: "anonymous".into(),
@@ -1048,6 +1051,7 @@ async fn extract_metadata(path: &Path) -> ImageMetadata {
             .or(internal.longitude)
             .filter(|value| value.is_finite() && (-180.0..=180.0).contains(value)),
         capture_date: external.capture_date.or(internal.capture_date),
+        author: external.author.or(internal.author),
     }
 }
 
@@ -1067,6 +1071,10 @@ fn extract_exif_internal(path: &Path) -> ImageMetadata {
             .or_else(|| exif.get_field(Tag::DateTime, In::PRIMARY))
             .and_then(exif_ascii)
             .and_then(|date| exif_date(&date)),
+        author: exif
+            .get_field(Tag::Artist, In::PRIMARY)
+            .and_then(exif_ascii)
+            .and_then(|author| sanitize_author(&author)),
     }
 }
 
@@ -1107,6 +1115,28 @@ struct ExifToolRecord {
     longitude: Option<f64>,
     #[serde(rename = "DateTimeOriginal")]
     capture_date: Option<String>,
+    #[serde(rename = "Creator")]
+    creator: Option<MetadataText>,
+    #[serde(rename = "By-line")]
+    byline: Option<MetadataText>,
+    #[serde(rename = "Artist")]
+    artist: Option<MetadataText>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum MetadataText {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl MetadataText {
+    fn author(&self) -> Option<String> {
+        match self {
+            Self::One(value) => sanitize_author(value),
+            Self::Many(values) => sanitize_author(&values.join("; ")),
+        }
+    }
 }
 
 fn exiftool_group_and_tag(key: &str) -> (&str, &str) {
@@ -1133,6 +1163,9 @@ async fn extract_with_exiftool(path: &Path) -> Result<ImageMetadata> {
             OsStr::new("-GPSLatitude"),
             OsStr::new("-GPSLongitude"),
             OsStr::new("-DateTimeOriginal"),
+            OsStr::new("-XMP-dc:Creator"),
+            OsStr::new("-IPTC:By-line"),
+            OsStr::new("-EXIF:Artist"),
             path.as_os_str(),
         ],
         20,
@@ -1151,7 +1184,31 @@ async fn extract_with_exiftool(path: &Path) -> Result<ImageMetadata> {
             .longitude
             .filter(|value| (-180.0..=180.0).contains(value)),
         capture_date: record.capture_date.and_then(|date| exif_date(&date)),
+        author: record
+            .creator
+            .as_ref()
+            .and_then(MetadataText::author)
+            .or_else(|| record.byline.as_ref().and_then(MetadataText::author))
+            .or_else(|| record.artist.as_ref().and_then(MetadataText::author)),
     })
+}
+
+fn sanitize_author(raw: &str) -> Option<String> {
+    let normalized = raw
+        .chars()
+        .map(|character| {
+            if character.is_control() || character == '\u{fffd}' {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let bounded = truncate_utf8_bytes(&normalized, MAX_AUTHOR_BYTES);
+    (!bounded.is_empty()).then_some(bounded)
 }
 
 fn exif_date(raw: &str) -> Option<String> {
@@ -1433,9 +1490,9 @@ fn display_error<T>(result: Result<T>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_COMMONS_FILENAME_BYTES, exif_date, image_probe_from_vips_loader,
-        initial_display_filename, renamed_display_filename, safe_child_path, validate_category,
-        validate_dimensions,
+        MAX_AUTHOR_BYTES, MAX_COMMONS_FILENAME_BYTES, exif_date, extract_exif_internal,
+        image_probe_from_vips_loader, initial_display_filename, renamed_display_filename,
+        safe_child_path, sanitize_author, validate_category, validate_dimensions,
     };
     use std::path::Path;
 
@@ -1493,5 +1550,41 @@ mod tests {
             Some("2025-07-18")
         );
         assert!(exif_date("2025:99:99 12:13:14").is_none());
+    }
+
+    #[test]
+    fn sanitizes_and_bounds_metadata_authors() {
+        assert_eq!(
+            sanitize_author("  Ada\u{0}  Lovelace\n").as_deref(),
+            Some("Ada Lovelace")
+        );
+        assert!(sanitize_author("\u{0}\n").is_none());
+        let author = sanitize_author(&"Ж".repeat(200)).unwrap();
+        assert!(author.len() <= MAX_AUTHOR_BYTES);
+        assert!(author.is_char_boundary(author.len()));
+    }
+
+    #[test]
+    fn extracts_internal_exif_artist_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("artist.tiff");
+        let artist = b"Internal Artist\0";
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"II");
+        tiff.extend_from_slice(&42_u16.to_le_bytes());
+        tiff.extend_from_slice(&8_u32.to_le_bytes());
+        tiff.extend_from_slice(&1_u16.to_le_bytes());
+        tiff.extend_from_slice(&315_u16.to_le_bytes());
+        tiff.extend_from_slice(&2_u16.to_le_bytes());
+        tiff.extend_from_slice(&(artist.len() as u32).to_le_bytes());
+        tiff.extend_from_slice(&26_u32.to_le_bytes());
+        tiff.extend_from_slice(&0_u32.to_le_bytes());
+        tiff.extend_from_slice(artist);
+        std::fs::write(&path, tiff).unwrap();
+
+        assert_eq!(
+            extract_exif_internal(&path).author.as_deref(),
+            Some("Internal Artist")
+        );
     }
 }

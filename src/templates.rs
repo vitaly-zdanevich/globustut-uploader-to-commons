@@ -9,8 +9,21 @@ pub struct SubmissionResult {
     pub detail: String,
 }
 
-pub fn upload_page(initial_category: &str, max_files: usize, max_file_mb: u64) -> String {
+pub fn upload_page(
+    initial_category: &str,
+    max_files: usize,
+    max_file_mb: u64,
+    max_request_mb: usize,
+) -> String {
     let category = attribute(initial_category);
+    let max_file_bytes = max_file_mb.saturating_mul(1024 * 1024);
+    let max_request_bytes = max_request_mb.saturating_mul(1024 * 1024);
+    let whole_gibibytes = max_request_mb / 1024;
+    let max_request = if whole_gibibytes * 1024 == max_request_mb {
+        format!("{whole_gibibytes} ГБ")
+    } else {
+        format!("{max_request_mb} МБ")
+    };
     let body = format!(
         r#"
         <main class='upload-shell'>
@@ -20,22 +33,22 @@ pub fn upload_page(initial_category: &str, max_files: usize, max_file_mb: u64) -
           </header>
           <section class='upload-workspace' aria-labelledby='upload-title'>
             <div class='section-heading'>
-              <p class='eyebrow'>Новая публикация</p>
-              <h1 id='upload-title'>Добавить фотографии</h1>
+              <h1 id='upload-title'>Добавить фотографии/видео</h1>
             </div>
             <form class='upload-form' action='/upload' method='post' enctype='multipart/form-data' data-upload-form>
               <label class='file-drop' data-file-drop>
-                <input type='file' name='files' multiple required data-file-input>
+                <input type='file' name='files' multiple required data-file-input data-max-files='{max_files}' data-max-file-bytes='{max_file_bytes}' data-max-request-bytes='{max_request_bytes}'>
                 <span class='file-drop-title'>Выбрать файлы</span>
-                <span class='file-drop-meta'>До {max_files} файлов, каждый до {max_file_mb} МБ</span>
+                <span class='file-drop-meta'>До {max_files} файлов, каждый до {max_file_mb} МБ, общий объём до {max_request}</span>
               </label>
               <div class='selected-files' data-selected-files aria-live='polite'></div>
+              <p class='file-error' role='alert' data-file-error hidden></p>
               <div class='field category-field'>
                 <label for='upload-category'>Категория Wikimedia Commons</label>
                 <input id='upload-category' type='text' name='category' value='{category}' maxlength='255' required autocomplete='off' spellcheck='false' role='combobox' aria-autocomplete='list' aria-haspopup='listbox' aria-controls='upload-category-menu' aria-expanded='false' data-category-input>
                 <div id='upload-category-menu' class='category-menu' role='listbox' data-category-menu hidden></div>
               </div>
-              <p class='license-note'>Отправляя файлы, вы подтверждаете право опубликовать их на условиях <strong>CC BY-SA 4.0</strong>.</p>
+              <p class='license-note'>Загружая сюда ваши фотографии, вы объявляете их лицензию <strong>Creative Commons BY 4.0</strong>. Автор будет указан из метаданных.</p>
               <div class='form-actions'>
                 <button class='primary-button' type='submit' data-submit>Отправить на премодерацию</button>
                 <span class='submit-status' data-submit-status aria-live='polite'></span>
@@ -43,9 +56,10 @@ pub fn upload_page(initial_category: &str, max_files: usize, max_file_mb: u64) -
             </form>
           </section>
         </main>
+        <footer class='upload-footer'>Спасибо за сохранение культурного наследия</footer>
         "#
     );
-    page("Добавить фотографии", &body, "upload-page")
+    page("Добавить фотографии/видео", &body, "upload-page")
 }
 
 pub fn upload_results(results: &[SubmissionResult]) -> String {
@@ -260,6 +274,10 @@ fn moderation_item(upload: &UploadRecord, csrf_token: &str) -> String {
         .capture_date
         .as_deref()
         .unwrap_or("Дата EXIF не указана");
+    let author = upload
+        .author
+        .as_deref()
+        .unwrap_or("Автор в метаданных не указан");
     let uploaded_at = format_timestamp(upload.created_at);
     let (nearby_attribute, nearby_initial) = if upload.has_coordinates() {
         (
@@ -294,6 +312,7 @@ fn moderation_item(upload: &UploadRecord, csrf_token: &str) -> String {
             <dl class="file-meta">
               <div><dt>Размер</dt><dd>{dimensions} · {conversion}</dd></div>
               <div><dt>Съёмка</dt><dd>{date}</dd></div>
+              <div><dt>Автор</dt><dd>{author}</dd></div>
               <div><dt>Место</dt><dd>{coordinates}</dd></div>
               <div><dt>Лицензия</dt><dd>{license}</dd></div>
               <div><dt>Исходное имя</dt><dd title="{original_title}">{original}</dd></div>
@@ -316,6 +335,7 @@ fn moderation_item(upload: &UploadRecord, csrf_token: &str) -> String {
         category = attribute(&upload.commons_category),
         category_url = attribute(&category_url),
         date = text(date),
+        author = text(author),
         coordinates = coordinates,
         license = text(license_label(&upload.license)),
         original = text(&truncate(&upload.original_filename, 70)),
@@ -400,7 +420,7 @@ fn truncate(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{SubmissionResult, login_page, upload_results};
+    use super::{SubmissionResult, login_page, upload_page, upload_results};
 
     #[test]
     fn escapes_dynamic_template_content() {
@@ -414,5 +434,18 @@ mod tests {
 
         let login = login_page(Some("bad <b>password</b>"));
         assert!(!login.contains("bad <b>password</b>"));
+    }
+
+    #[test]
+    fn renders_public_upload_contract() {
+        let html = upload_page("Castles_in_Belarus", 500, 200, 2048);
+
+        assert!(html.contains("value='Castles_in_Belarus'"));
+        assert!(html.contains("До 500 файлов, каждый до 200 МБ, общий объём до 2 ГБ"));
+        assert!(html.contains("Creative Commons BY 4.0"));
+        assert!(html.contains("Автор будет указан из метаданных."));
+        assert!(html.contains("Добавить фотографии/видео"));
+        assert!(html.contains("Спасибо за сохранение культурного наследия"));
+        assert!(!html.contains("Новая публикация"));
     }
 }

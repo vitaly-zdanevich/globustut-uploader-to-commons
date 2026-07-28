@@ -17,12 +17,43 @@
     const drop = document.querySelector('[data-file-drop]');
     const list = document.querySelector('[data-selected-files]');
     if (!(input instanceof HTMLInputElement) || !drop || !list) return;
+    const error = input.form?.querySelector('[data-file-error]');
+    const readLimit = (value) => {
+      const parsed = Number(value);
+      return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : Number.POSITIVE_INFINITY;
+    };
+    const maxFiles = readLimit(input.dataset.maxFiles);
+    const maxFileBytes = readLimit(input.dataset.maxFileBytes);
+    const maxRequestBytes = readLimit(input.dataset.maxRequestBytes);
 
     let files = [];
+    let currentError = '';
     const syncInput = () => {
       const transfer = new DataTransfer();
       files.forEach((file) => transfer.items.add(file));
       input.files = transfer.files;
+    };
+    const setError = (message) => {
+      currentError = message;
+      input.setCustomValidity(message);
+      if (error) {
+        error.textContent = message;
+        error.hidden = !message;
+      }
+    };
+    const validate = (incoming) => {
+      if (incoming.length > maxFiles) {
+        return `Можно выбрать не более ${maxFiles} файлов.`;
+      }
+      const oversized = incoming.find((file) => file.size > maxFileBytes);
+      if (oversized) {
+        return `Файл «${oversized.name}» превышает лимит ${formatSize(maxFileBytes)}.`;
+      }
+      const totalBytes = incoming.reduce((total, file) => total + file.size, 0);
+      if (totalBytes > maxRequestBytes) {
+        return `Общий размер файлов превышает ${formatSize(maxRequestBytes)}.`;
+      }
+      return '';
     };
     const render = () => {
       list.replaceChildren();
@@ -45,15 +76,26 @@
           files.splice(index, 1);
           syncInput();
           render();
+          setError('');
         });
         row.append(name, size, remove);
         list.append(row);
       });
     };
     const replaceFiles = (incoming) => {
-      files = Array.from(incoming);
+      const nextFiles = Array.from(incoming);
+      const validationError = validate(nextFiles);
+      if (validationError) {
+        files = [];
+        syncInput();
+        render();
+        setError(validationError);
+        return;
+      }
+      files = nextFiles;
       syncInput();
       render();
+      setError('');
     };
     input.addEventListener('change', () => replaceFiles(input.files ?? []));
     ['dragenter', 'dragover'].forEach((name) => drop.addEventListener(name, (event) => {
@@ -67,6 +109,13 @@
     drop.addEventListener('drop', (event) => {
       if (event.dataTransfer?.files) replaceFiles(event.dataTransfer.files);
     });
+    input.form?.addEventListener('submit', (event) => {
+      const validationError = currentError || validate(Array.from(input.files ?? []));
+      if (!validationError) return;
+      event.preventDefault();
+      setError(validationError);
+      input.focus();
+    });
   };
 
   const normalizeCategory = (value) => value
@@ -75,9 +124,32 @@
     .replaceAll('_', ' ')
     .replace(/\s+/g, ' ');
 
+  const categoryControllers = new WeakMap();
+
   const setupCategoryInput = (input) => {
     const menu = input.parentElement?.querySelector('[data-category-menu]');
     if (!(menu instanceof HTMLElement)) return;
+    const chip = document.createElement('span');
+    chip.className = 'category-chip';
+    chip.dataset.categoryChip = '';
+    chip.hidden = true;
+    const chipLabel = document.createElement('span');
+    chipLabel.className = 'category-chip-label';
+    const chipActions = document.createElement('span');
+    chipActions.className = 'category-chip-actions';
+    const chipLink = document.createElement('a');
+    chipLink.className = 'category-chip-link';
+    chipLink.textContent = '🔗';
+    chipLink.target = '_blank';
+    chipLink.rel = 'noopener';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'category-chip-remove';
+    remove.textContent = '×';
+    chipActions.append(chipLink, remove);
+    chip.append(chipLabel, chipActions);
+    input.before(chip);
+
     let timer = 0;
     let requestSequence = 0;
     let abortController;
@@ -105,11 +177,43 @@
       input.removeAttribute('aria-activedescendant');
       activeIndex = -1;
     };
-    const choose = (category) => {
-      input.value = category;
+
+    const cancelSearch = () => {
+      window.clearTimeout(timer);
+      timer = 0;
+      requestSequence += 1;
+      abortController?.abort();
+      abortController = undefined;
+    };
+    const commit = (category, focusRemove = true) => {
+      const normalized = normalizeCategory(category);
+      if (!normalized) return false;
+      cancelSearch();
+      input.value = normalized;
+      chipLabel.textContent = normalized;
+      const linkLabel = `Открыть категорию ${normalized} на Wikimedia Commons`;
+      chipLink.href = `https://commons.wikimedia.org/wiki/Category:${encodeURIComponent(normalized.replaceAll(' ', '_'))}`;
+      chipLink.title = linkLabel;
+      chipLink.setAttribute('aria-label', linkLabel);
+      remove.title = `Удалить категорию ${normalized}`;
+      remove.setAttribute('aria-label', `Удалить категорию ${normalized}`);
       hide();
+      input.hidden = true;
+      chip.hidden = false;
+      if (focusRemove) remove.focus();
+      return true;
+    };
+    const clearCommit = () => {
+      cancelSearch();
+      hide();
+      chip.hidden = true;
+      input.hidden = false;
+      input.value = '';
       input.focus();
     };
+    remove.addEventListener('click', clearCommit);
+    categoryControllers.set(input, { commit });
+
     const render = (categories, failed = false) => {
       menu.replaceChildren();
       suggestions = categories;
@@ -123,7 +227,7 @@
         option.textContent = category;
         option.addEventListener('pointerdown', (event) => event.preventDefault());
         option.addEventListener('pointermove', () => setActive(index));
-        option.addEventListener('click', () => choose(category));
+        option.addEventListener('click', () => commit(category));
         menu.append(option);
       });
       if (failed) {
@@ -135,6 +239,7 @@
       }
       menu.hidden = menu.childElementCount === 0;
       input.setAttribute('aria-expanded', String(!menu.hidden));
+      if (categories.length > 0) setActive(0);
     };
     const search = async () => {
       const query = normalizeCategory(input.value);
@@ -168,6 +273,7 @@
     input.addEventListener('blur', () => window.setTimeout(hide, 120));
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
+        cancelSearch();
         hide();
       } else if (!menu.hidden && event.key === 'ArrowDown') {
         event.preventDefault();
@@ -181,11 +287,18 @@
       } else if (!menu.hidden && event.key === 'End') {
         event.preventDefault();
         setActive(suggestions.length - 1);
-      } else if (!menu.hidden && event.key === 'Enter' && activeIndex >= 0) {
+      } else if (event.key === 'Enter' && !event.isComposing) {
+        const typedCategory = normalizeCategory(input.value);
+        if (!typedCategory) return;
         event.preventDefault();
-        choose(suggestions[activeIndex]);
+        if (!menu.hidden && suggestions.length > 0) {
+          commit(suggestions[activeIndex >= 0 ? activeIndex : 0]);
+        } else {
+          commit(typedCategory);
+        }
       }
     });
+    if (normalizeCategory(input.value)) commit(input.value, false);
   };
 
   const loadNearby = async (container) => {
@@ -218,8 +331,7 @@
           ? `${candidate.label}${distance}`
           : candidate.category;
         button.addEventListener('click', () => {
-          input.value = candidate.category;
-          input.focus();
+          categoryControllers.get(input)?.commit(candidate.category);
         });
         container.append(button);
       });
@@ -258,13 +370,14 @@
       }
     });
   });
+  setupFiles();
   const uploadForm = document.querySelector('[data-upload-form]');
-  uploadForm?.addEventListener('submit', () => {
+  uploadForm?.addEventListener('submit', (event) => {
+    if (event.defaultPrevented) return;
     const button = uploadForm.querySelector('[data-submit]');
     const status = uploadForm.querySelector('[data-submit-status]');
     if (button instanceof HTMLButtonElement) button.disabled = true;
     if (status) status.textContent = 'Файлы загружаются…';
   });
-  setupFiles();
   setupNearby();
 })();

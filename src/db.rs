@@ -32,6 +32,7 @@ pub struct UploadRecord {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub capture_date: Option<String>,
+    pub author: Option<String>,
     pub commons_category: String,
     pub license: String,
     pub uploader_username: String,
@@ -94,6 +95,7 @@ impl Database {
                     latitude REAL,
                     longitude REAL,
                     capture_date TEXT,
+                    author TEXT,
                     commons_category TEXT NOT NULL,
                     license TEXT NOT NULL,
                     uploader_username TEXT NOT NULL,
@@ -101,10 +103,9 @@ impl Database {
                 );
                 CREATE INDEX IF NOT EXISTS uploads_created_at_idx
                     ON uploads(created_at DESC);
-
-                PRAGMA user_version = 1;
                 "#,
             )?;
+            migrate_schema(connection)?;
             Ok(())
         })
         .await?;
@@ -270,10 +271,10 @@ impl Database {
                     id, stored_filename, original_filename, display_filename,
                     mime_type, media_kind, size_bytes, original_size_bytes,
                     converted, width, height, latitude, longitude, capture_date,
-                    commons_category, license, uploader_username, created_at
+                    author, commons_category, license, uploader_username, created_at
                 ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                    ?13, ?14, ?15, ?16, ?17, ?18
+                    ?13, ?14, ?15, ?16, ?17, ?18, ?19
                 )"#,
                 params![
                     upload.id,
@@ -290,6 +291,7 @@ impl Database {
                     upload.latitude,
                     upload.longitude,
                     upload.capture_date,
+                    upload.author,
                     upload.commons_category,
                     upload.license,
                     upload.uploader_username,
@@ -308,7 +310,7 @@ impl Database {
                     id, stored_filename, original_filename, display_filename,
                     mime_type, media_kind, size_bytes, original_size_bytes,
                     converted, width, height, latitude, longitude, capture_date,
-                    commons_category, license, uploader_username, created_at
+                    author, commons_category, license, uploader_username, created_at
                 FROM uploads
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?1 OFFSET ?2"#,
@@ -328,7 +330,7 @@ impl Database {
                         id, stored_filename, original_filename, display_filename,
                         mime_type, media_kind, size_bytes, original_size_bytes,
                         converted, width, height, latitude, longitude, capture_date,
-                        commons_category, license, uploader_username, created_at
+                        author, commons_category, license, uploader_username, created_at
                     FROM uploads WHERE id = ?1"#,
                     [id],
                     row_to_upload,
@@ -429,11 +431,35 @@ fn row_to_upload(row: &rusqlite::Row<'_>) -> rusqlite::Result<UploadRecord> {
         latitude: row.get(11)?,
         longitude: row.get(12)?,
         capture_date: row.get(13)?,
-        commons_category: row.get(14)?,
-        license: row.get(15)?,
-        uploader_username: row.get(16)?,
-        created_at: row.get(17)?,
+        author: row.get(14)?,
+        commons_category: row.get(15)?,
+        license: row.get(16)?,
+        uploader_username: row.get(17)?,
+        created_at: row.get(18)?,
     })
+}
+
+fn migrate_schema(connection: &Connection) -> Result<()> {
+    let version = connection.query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))?;
+    if version >= 2 {
+        return Ok(());
+    }
+
+    let transaction = connection.unchecked_transaction()?;
+    let has_author = {
+        let mut statement = transaction.prepare("PRAGMA table_info(uploads)")?;
+        let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+        columns
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|column| column == "author")
+    };
+    if !has_author {
+        transaction.execute("ALTER TABLE uploads ADD COLUMN author TEXT", [])?;
+    }
+    transaction.pragma_update(None, "user_version", 2)?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn normalized_username(username: &str) -> Result<String> {
@@ -476,8 +502,9 @@ mod tests {
             latitude: Some(53.9),
             longitude: Some(27.5667),
             capture_date: None,
+            author: Some("Example Photographer".into()),
             commons_category: "Minsk".into(),
-            license: "cc-by-sa-4.0".into(),
+            license: "cc-by-4.0".into(),
             uploader_username: "Example".into(),
             created_at: 1,
         }
@@ -536,7 +563,9 @@ mod tests {
         );
 
         db.insert_upload(upload("one")).await.unwrap();
-        assert_eq!(db.list_uploads(10, 0).await.unwrap().len(), 1);
+        let uploads = db.list_uploads(10, 0).await.unwrap();
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(uploads[0].author.as_deref(), Some("Example Photographer"));
         assert!(db.update_category("one", "Belarus").await.unwrap());
         assert_eq!(
             db.get_upload("one")
@@ -546,5 +575,76 @@ mod tests {
                 .commons_category,
             "Belarus"
         );
+    }
+
+    #[tokio::test]
+    async fn migrates_v1_uploads_and_preserves_existing_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("test.sqlite3");
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE uploads (
+                    id TEXT PRIMARY KEY,
+                    stored_filename TEXT NOT NULL UNIQUE,
+                    original_filename TEXT NOT NULL,
+                    display_filename TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    media_kind TEXT NOT NULL CHECK (media_kind IN ('image', 'video')),
+                    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+                    original_size_bytes INTEGER NOT NULL CHECK (original_size_bytes >= 0),
+                    converted INTEGER NOT NULL CHECK (converted IN (0, 1)),
+                    width INTEGER,
+                    height INTEGER,
+                    latitude REAL,
+                    longitude REAL,
+                    capture_date TEXT,
+                    commons_category TEXT NOT NULL,
+                    license TEXT NOT NULL,
+                    uploader_username TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                INSERT INTO uploads VALUES (
+                    'legacy', 'legacy.jpg', 'legacy.jpg', 'Legacy.jpg',
+                    'image/jpeg', 'image', 10, 10, 0, 1, 1, NULL, NULL, NULL,
+                    'Minsk', 'cc-by-4.0', 'anonymous', 1
+                );
+                PRAGMA user_version = 1;
+                "#,
+            )
+            .unwrap();
+        drop(connection);
+
+        let db = Database::new(&path);
+        db.initialize().await.unwrap();
+        db.initialize().await.unwrap();
+
+        let legacy = db.get_upload("legacy").await.unwrap().unwrap();
+        assert!(legacy.author.is_none());
+        db.insert_upload(upload("new")).await.unwrap();
+        assert_eq!(
+            db.get_upload("new")
+                .await
+                .unwrap()
+                .unwrap()
+                .author
+                .as_deref(),
+            Some("Example Photographer")
+        );
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let author_columns: u32 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('uploads') WHERE name = 'author'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 2);
+        assert_eq!(author_columns, 1);
     }
 }

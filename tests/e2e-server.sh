@@ -20,13 +20,14 @@ trap cleanup EXIT INT TERM
 export TOOL_DATA_DIR="$DATA_ROOT/data"
 export APP_TEMP_DIR="$DATA_ROOT/tmp"
 export DATABASE_PATH="$DATA_ROOT/data/e2e.sqlite3"
-export PORT=4173
+export PORT="${E2E_PORT:-4173}"
+export E2E_MOCK_PORT="${E2E_MOCK_PORT:-$((PORT + 1))}"
 export BIND_ADDR=127.0.0.1
-export PUBLIC_BASE_URL=http://127.0.0.1:4173
+export PUBLIC_BASE_URL="http://127.0.0.1:$PORT"
 export COOKIE_SECURE=false
 export DISK_RESERVE_MB=0
-export COMMONS_API_URL=http://127.0.0.1:4174/w/api.php
-export WIKIDATA_SPARQL_URL=http://127.0.0.1:4174/sparql
+export COMMONS_API_URL="http://127.0.0.1:$E2E_MOCK_PORT/w/api.php"
+export WIKIDATA_SPARQL_URL="http://127.0.0.1:$E2E_MOCK_PORT/sparql"
 export E2E_ADMIN_PASSWORD='correct horse battery staple'
 export RUST_LOG=warn
 

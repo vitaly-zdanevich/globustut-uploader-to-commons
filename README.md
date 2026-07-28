@@ -6,13 +6,13 @@ This MVP **does not upload anything to Wikimedia Commons**. It stores accepted f
 
 ## Included in the MVP
 
-- public multi-file intake with a required Commons category and a fixed CC BY-SA 4.0 license;
+- public multi-file intake with a required Commons category and a fixed CC BY 4.0 license;
 - content-based media detection instead of trusting browser MIME types or extensions;
 - unchanged storage for Commons-compatible JPEG, PNG, GIF, TIFF, and WebP files;
 - conversion of other images understood by libvips or ImageMagick to WebP;
 - DNG handling that extracts the largest decoder-valid JPEG preview exposed by ExifTool first, then develops the raw image with LibRaw and encodes it as WebP (with libvips/ImageMagick as a final fallback);
 - acceptance of already compatible WebM, Ogg Theora, and MPEG-1/2 video, with no video conversion;
-- EXIF capture date and GPS extraction, with an OpenStreetMap link in moderation;
+- EXIF/XMP author, capture date, and GPS extraction, with an OpenStreetMap link in moderation;
 - local SQLite moderator accounts using Argon2id passwords and private sessions;
 - rename, category change, and permanent deletion controls;
 - Commons category autocomplete plus up to 20 closest categories from Wikidata `P625` and `P373`;
@@ -51,7 +51,7 @@ Open `http://127.0.0.1:8000/` for upload and `http://127.0.0.1:8000/admin` for m
 https://globustut-uploader-to-commons.toolforge.org/?category=Castles_in_Belarus
 ```
 
-Direct multipart clients submit repeated `files` fields plus one `category` field. They do not submit a license or rights-confirmation field: the server records every accepted upload as CC BY-SA 4.0.
+Direct multipart clients submit repeated `files` fields plus one `category` field. They do not submit a license or rights-confirmation field: the server records every accepted upload as CC BY 4.0.
 
 Account commands operate on the configured SQLite database:
 
@@ -72,16 +72,18 @@ The defaults are shown in [.env.example](.env.example). Important settings are:
 | `TOOL_DATA_DIR` | `data`, or a private child of Toolforge NFS | SQLite, pending originals, and thumbnails |
 | `APP_TEMP_DIR` | OS temp directory plus `globustut-uploader` | upload buffering and conversions |
 | `MAX_FILE_MB` | `200` | per-file input limit |
-| `MAX_REQUEST_MB` | `1000` | complete multipart request limit |
-| `MAX_FILES` | `20` | files per submission |
+| `MAX_REQUEST_MB` | `2048` | combined file payload limit per submission |
+| `MAX_FILES` | `500` | files per submission |
 | `MAX_PENDING_MB` | `20000` | total indexed moderation queue limit |
 | `DISK_RESERVE_MB` | `512` | required free filesystem reserve |
 | `MAX_PIXELS` | `250000000` | image decompression safety limit |
-| `REQUEST_TIMEOUT_SECONDS` | `900` | complete request deadline |
+| `REQUEST_TIMEOUT_SECONDS` | `3600` | complete request deadline |
 | `SESSION_TTL_HOURS` | `12` | moderator session lifetime |
 | `NEARBY_RADIUS_METERS` | `10000` | Wikidata geographic search radius |
 | `NEARBY_CATEGORY_LIMIT` | `20` | result limit, always clamped to 20 |
 | `PUBLIC_BASE_URL` | inferred | public URL and secure-cookie default |
+
+The per-file, file-count, and submission limits are independent. A batch may contain up to 500 files only when their combined file payload remains within 2 GiB; the HTTP body limit includes a small additional allowance for multipart headers.
 
 SQLite uses one connection per blocking operation, full synchronous writes, and rollback journaling. The Toolforge service therefore runs exactly one replica. This is suitable for a low-volume moderation queue; move the database to ToolsDB before scaling replicas or write volume.
 
@@ -150,7 +152,7 @@ Resolve these points with Toolforge administrators before enabling the public fo
 1. The current intake route is anonymous because that is the requested product flow. Toolforge's rules generally require users who publish content through a tool to be registered and validated. Confirm that private, premoderated staging qualifies, or add an accepted uploader-authentication mechanism. The local moderator password is not uploader validation.
 2. Pending images and EXIF GPS are private user data stored outside Commons. Publish a retention/privacy policy, limit moderator access, and delete rejected media promptly.
 3. The queue has a byte cap and disk reserve, but public intake still needs operational monitoring and a retention decision before launch.
-4. The server assigns CC BY-SA 4.0 to every upload; moderation must still check authorship, permission, privacy, Commons scope, and filename/category collisions before future publication.
+4. The server assigns CC BY 4.0 to every upload; moderation must still check authorship, permission, privacy, Commons scope, and filename/category collisions before future publication.
 
 Relevant platform documentation: [Toolforge Build Service](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Build_service), [webservices](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Web), [Kubernetes storage](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Kubernetes), [Toolforge rules](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Rules), and [Wikimedia Cloud Services terms](https://wikitech.wikimedia.org/wiki/Cloud_Services_Terms_of_use).
 

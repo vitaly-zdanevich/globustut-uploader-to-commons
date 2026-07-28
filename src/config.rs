@@ -4,8 +4,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
 pub const DEFAULT_MAX_FILE_MB: u64 = 200;
-pub const DEFAULT_MAX_REQUEST_MB: u64 = 1_000;
-pub const DEFAULT_MAX_FILES: usize = 20;
+pub const DEFAULT_MAX_REQUEST_MB: u64 = 2_048;
+pub const DEFAULT_MAX_FILES: usize = 500;
+const HARD_MAX_FILES: usize = 500;
 pub const DEFAULT_DISK_RESERVE_MB: u64 = 512;
 pub const DEFAULT_MAX_PENDING_MB: u64 = 20_000;
 pub const DEFAULT_MAX_PIXELS: u64 = 250_000_000;
@@ -93,6 +94,9 @@ impl Config {
             parse_bool_env("COOKIE_SECURE", public_base_url.starts_with("https://"))?;
 
         let max_request_mb = parse_env("MAX_REQUEST_MB", DEFAULT_MAX_REQUEST_MB)?;
+        let max_file_mb = parse_env("MAX_FILE_MB", DEFAULT_MAX_FILE_MB)?;
+        let max_files = parse_env("MAX_FILES", DEFAULT_MAX_FILES)?;
+        validate_upload_limits(max_file_mb, max_request_mb, max_files)?;
         let max_request_bytes_u64 = mb(max_request_mb)?;
         let max_request_bytes = usize::try_from(max_request_bytes_u64)
             .context("MAX_REQUEST_MB is too large for this platform")?;
@@ -103,14 +107,14 @@ impl Config {
             thumbnail_dir,
             temp_dir,
             database_path,
-            max_file_bytes: mb(parse_env("MAX_FILE_MB", DEFAULT_MAX_FILE_MB)?)?,
+            max_file_bytes: mb(max_file_mb)?,
             max_request_bytes,
-            max_files: parse_env("MAX_FILES", DEFAULT_MAX_FILES)?,
+            max_files,
             disk_reserve_bytes: mb(parse_env("DISK_RESERVE_MB", DEFAULT_DISK_RESERVE_MB)?)?,
             max_pending_bytes: mb(parse_env("MAX_PENDING_MB", DEFAULT_MAX_PENDING_MB)?)?,
             max_pixels: parse_env("MAX_PIXELS", DEFAULT_MAX_PIXELS)?,
             conversion_timeout_seconds: parse_env("CONVERSION_TIMEOUT_SECONDS", 120_u64)?,
-            request_timeout_seconds: parse_env("REQUEST_TIMEOUT_SECONDS", 900_u64)?,
+            request_timeout_seconds: parse_env("REQUEST_TIMEOUT_SECONDS", 3600_u64)?,
             session_ttl_seconds: parse_env("SESSION_TTL_HOURS", 12_i64)?
                 .checked_mul(3600)
                 .context("SESSION_TTL_HOURS is too large")?,
@@ -205,6 +209,19 @@ fn mb(value: u64) -> Result<u64> {
     value.checked_mul(1024 * 1024).context("size is too large")
 }
 
+fn validate_upload_limits(max_file_mb: u64, max_request_mb: u64, max_files: usize) -> Result<()> {
+    if max_file_mb == 0 {
+        bail!("MAX_FILE_MB must be greater than zero");
+    }
+    if max_request_mb < max_file_mb {
+        bail!("MAX_REQUEST_MB must be at least MAX_FILE_MB");
+    }
+    if !(1..=HARD_MAX_FILES).contains(&max_files) {
+        bail!("MAX_FILES must be between 1 and {HARD_MAX_FILES}");
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 fn set_private_directory_permissions(path: &std::path::Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -225,7 +242,7 @@ fn set_private_directory_permissions(_path: &std::path::Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{mb, tool_name_from_data_dir};
+    use super::{mb, tool_name_from_data_dir, validate_upload_limits};
 
     #[test]
     fn converts_megabytes_without_overflow() {
@@ -248,5 +265,15 @@ mod tests {
             tool_name_from_data_dir("/data/project/globustut/globustut-uploader"),
             Some("globustut".into())
         );
+    }
+
+    #[test]
+    fn validates_upload_limit_relationships() {
+        assert!(validate_upload_limits(200, 2048, 500).is_ok());
+        assert!(validate_upload_limits(200, 2048, 1).is_ok());
+        assert!(validate_upload_limits(0, 2048, 500).is_err());
+        assert!(validate_upload_limits(200, 199, 500).is_err());
+        assert!(validate_upload_limits(200, 2048, 0).is_err());
+        assert!(validate_upload_limits(200, 2048, 501).is_err());
     }
 }

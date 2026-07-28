@@ -30,6 +30,7 @@ use tower_http::trace::TraceLayer;
 
 const ADMIN_PAGE_SIZE: usize = 40;
 const MAX_SMALL_FIELD_BYTES: usize = 4 * 1024;
+const MULTIPART_OVERHEAD_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -58,13 +59,16 @@ impl AppState {
             auth,
             media,
             commons,
-            upload_slots: Arc::new(Semaphore::new(3)),
+            upload_slots: Arc::new(Semaphore::new(1)),
         })
     }
 }
 
 pub fn router(state: AppState) -> Router {
-    let upload_limit = state.config.max_request_bytes;
+    let upload_limit = state
+        .config
+        .max_request_bytes
+        .saturating_add(MULTIPART_OVERHEAD_BYTES);
     let request_timeout = Duration::from_secs(state.config.request_timeout_seconds);
     let request_id_header = HeaderName::from_static("x-request-id");
     Router::new()
@@ -118,6 +122,7 @@ async fn upload_page(
         category,
         state.config.max_files,
         state.config.max_file_bytes / (1024 * 1024),
+        state.config.max_request_bytes / (1024 * 1024),
     ))
 }
 
@@ -148,6 +153,7 @@ async fn upload(
     let mut pending = Vec::new();
     let mut cleanup = TemporaryFiles(Vec::new());
     let mut category = None;
+    let mut total_file_bytes = 0_u64;
 
     while let Some(mut field) = multipart
         .next_field()
@@ -171,11 +177,20 @@ async fn upload(
                     .temp_dir
                     .join(format!("upload-{}", uuid::Uuid::new_v4()));
                 cleanup.0.push(path.clone());
-                write_multipart_file(&mut field, &path, state.config.max_file_bytes)
+                let written = write_multipart_file(&mut field, &path, state.config.max_file_bytes)
                     .await
                     .map_err(|error| {
                         AppError::bad_request(format!("{}: {error}", safe_name(&filename)))
                     })?;
+                total_file_bytes = total_file_bytes
+                    .checked_add(written)
+                    .ok_or_else(|| AppError::bad_request("Общий размер файлов слишком велик."))?;
+                if total_file_bytes > state.config.max_request_bytes as u64 {
+                    return Err(AppError::bad_request(format!(
+                        "Общий размер файлов не должен превышать {} МБ.",
+                        state.config.max_request_bytes / (1024 * 1024)
+                    )));
+                }
                 pending.push(PendingFile { path, filename });
             }
             "category" => {
@@ -195,11 +210,12 @@ async fn upload(
     let category = category.unwrap_or_default();
     let mut results = Vec::with_capacity(pending.len());
     for file in pending {
-        match state
+        let result = state
             .media
             .ingest(&file.path, &file.filename, &category)
-            .await
-        {
+            .await;
+        tokio::fs::remove_file(&file.path).await.ok();
+        match result {
             Ok(record) => results.push(SubmissionResult {
                 filename: record.display_filename,
                 accepted: true,

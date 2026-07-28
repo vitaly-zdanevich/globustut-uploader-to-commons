@@ -24,6 +24,7 @@ test.beforeAll(() => {
     '-GPSLongitude=27.5615',
     '-GPSLongitudeRef=E',
     '-DateTimeOriginal=2025:07:18 12:13:14',
+    '-XMP-dc:Creator=Test Photographer',
     gpsPhoto,
   ]);
 });
@@ -33,26 +34,66 @@ test.afterAll(() => {
 });
 
 test('public upload and moderation workflow', async ({ page }, testInfo) => {
-  const suffix = testInfo.project.name.startsWith('mobile') ? 'mobile' : 'desktop';
+  const viewport = testInfo.project.name.startsWith('mobile') ? 'mobile' : 'desktop';
+  const suffix = `${viewport}-${testInfo.retry}`;
   const renamed = `Нясвіжскі замак ${suffix}`;
 
   await page.goto('/?category=Castles_in_Belarus');
-  await expect(page.getByRole('heading', { name: 'Добавить фотографии' })).toBeVisible();
-  await expect(page.getByText(/CC BY-SA 4\.0/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Добавить фотографии/видео' })).toBeVisible();
+  await expect(page.getByText(/Creative Commons BY 4\.0/)).toBeVisible();
+  await expect(page.getByText('Автор будет указан из метаданных.')).toBeVisible();
+  await expect(page.getByText('Спасибо за сохранение культурного наследия')).toBeVisible();
+  await expect(page.getByText('Новая публикация')).toHaveCount(0);
+  await expect(page.getByText(/До 500 файлов.+общий объём до 2 ГБ/)).toBeVisible();
   await expect(page.locator('input[name=license], input[name=rights_confirmed]')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  const publicCategory = page.getByRole('combobox', { name: 'Категория Wikimedia Commons' });
-  await publicCategory.fill('Castl');
-  await expect(page.getByRole('option', { name: 'Castles in Belarus' })).toBeVisible();
-  await publicCategory.press('ArrowDown');
-  await publicCategory.press('Enter');
-  await expect(publicCategory).toHaveValue('Castles in Belarus');
-  await page.locator('input[type=file]').setInputFiles({
+  const publicCategory = page.locator('#upload-category');
+  const publicChip = page.locator('[data-category-chip]');
+  await expect(publicChip.locator('.category-chip-label')).toHaveText('Castles in Belarus');
+  await expect(publicCategory).toBeHidden();
+  const publicCategoryLink = publicChip.getByRole('link', {
+    name: 'Открыть категорию Castles in Belarus на Wikimedia Commons',
+  });
+  await expect(publicCategoryLink).toHaveAttribute(
+    'href',
+    'https://commons.wikimedia.org/wiki/Category:Castles_in_Belarus',
+  );
+  await expect(publicCategoryLink).toHaveAttribute('target', '_blank');
+  await expect(publicCategoryLink).toHaveAttribute('rel', 'noopener');
+  await publicChip.getByRole('button', { name: 'Удалить категорию Castles in Belarus' }).click();
+  await expect(publicCategory).toBeVisible();
+  await expect(publicCategory).toBeFocused();
+  await expect(publicCategory).toHaveValue('');
+  const fileInput = page.locator('input[type=file]');
+  const maxFiles = Number(await fileInput.getAttribute('data-max-files'));
+  await fileInput.setInputFiles({
     name: `castle-${suffix}.jpg`,
     mimeType: 'image/jpeg',
     buffer: readFileSync(gpsPhoto),
   });
   await expect(page.getByText(`castle-${suffix}.jpg`)).toBeVisible();
+  await fileInput.setInputFiles(Array.from({ length: maxFiles + 1 }, (_, index) => ({
+    name: `extra-${index}.jpg`,
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from([0]),
+  })));
+  await expect(page.getByRole('alert')).toHaveText(`Можно выбрать не более ${maxFiles} файлов.`);
+  expect(await fileInput.evaluate((element: HTMLInputElement) => element.files?.length)).toBe(0);
+  await expect(page.locator('.selected-file')).toHaveCount(0);
+  await fileInput.setInputFiles({
+    name: `castle-${suffix}.jpg`,
+    mimeType: 'image/jpeg',
+    buffer: readFileSync(gpsPhoto),
+  });
+  await expect(page.getByRole('alert')).toBeHidden();
+  await expect(page.getByText(`castle-${suffix}.jpg`)).toBeVisible();
+  await publicCategory.fill('Castl');
+  await expect(page.getByRole('option', { name: 'Castles in Belarus' })).toBeVisible();
+  await publicCategory.press('Enter');
+  await expect(page).toHaveURL(/\?category=Castles_in_Belarus$/);
+  await expect(publicCategory).toHaveValue('Castles in Belarus');
+  await expect(publicCategory).toBeHidden();
+  await expect(publicChip.locator('.category-chip-label')).toHaveText('Castles in Belarus');
   await page.getByRole('button', { name: 'Отправить на премодерацию' }).click();
   await expect(page.getByRole('heading', { name: 'Принято файлов: 1' })).toBeVisible();
 
@@ -74,30 +115,42 @@ test('public upload and moderation workflow', async ({ page }, testInfo) => {
     /mlat=53\.904500&mlon=27\.561500/,
   );
   await expect(card.getByText('2025-07-18')).toBeVisible();
+  await expect(card.getByText('Test Photographer')).toBeVisible();
+  await expect(card.getByText('CC BY 4.0')).toBeVisible();
   const nearby = card.locator('.nearby-category');
   await expect(nearby).toHaveCount(20);
   await expect(nearby.first()).toHaveText('Nearby category 25 · 0.1 км');
   await nearby.first().click();
   await expect(card.locator('input[name=category]')).toHaveValue('Nearby category 25');
+  await expect(card.locator('[data-category-chip] .category-chip-label'))
+    .toHaveText('Nearby category 25');
 
   await card.locator('input[name=basename]').fill(renamed);
   await card.getByRole('button', { name: 'Сохранить имя' }).click();
-  const currentCard = page.locator('.moderation-item').first();
+  const currentCard = page.locator('.moderation-item', { hasText: `castle-${suffix}` });
   await expect(currentCard.locator('input[name=basename]')).toHaveValue(renamed);
 
   const categoryInput = currentCard.locator('input[name=category]');
+  const categoryChip = currentCard.locator('[data-category-chip]');
+  await categoryChip.getByRole('button', { name: 'Удалить категорию Castles in Belarus' }).click();
+  await expect(categoryInput).toBeFocused();
   await categoryInput.fill('Castl');
   await expect(currentCard.getByRole('option', { name: 'Castles in Belarus' })).toBeVisible();
-  await categoryInput.press('ArrowDown');
-  await categoryInput.press('Enter');
+  await currentCard.getByRole('option', { name: 'Castles in Belarus' }).click();
   await expect(categoryInput).toHaveValue('Castles in Belarus');
+  await expect(categoryChip.locator('.category-chip-label')).toHaveText('Castles in Belarus');
+  await categoryChip.getByRole('button', { name: 'Удалить категорию Castles in Belarus' }).click();
   await categoryInput.fill('Castles of Belarus');
+  await expect(currentCard.getByRole('option', { name: 'Castles in Belarus' })).toBeVisible();
+  await categoryInput.press('Escape');
+  await categoryInput.press('Enter');
+  await expect(categoryChip.locator('.category-chip-label')).toHaveText('Castles of Belarus');
   await currentCard.getByRole('button', { name: 'Сохранить категорию' }).click();
   await expect(currentCard.locator('input[name=category]')).toHaveValue('Castles of Belarus');
 
   page.once('dialog', (dialog) => dialog.accept());
   await currentCard.getByRole('button', { name: 'Удалить файл' }).click();
-  await expect(page.locator('.moderation-item')).toHaveCount(0);
+  await expect(currentCard).toHaveCount(0);
 
   await page.goto('/');
   await page.locator('input[type=file]').setInputFiles({
@@ -108,7 +161,7 @@ test('public upload and moderation workflow', async ({ page }, testInfo) => {
   await page.getByRole('combobox', { name: 'Категория Wikimedia Commons' }).fill('Belarus');
   await page.getByRole('button', { name: 'Отправить на премодерацию' }).click();
   await page.goto('/admin');
-  const noGpsCard = page.locator('.moderation-item').first();
+  const noGpsCard = page.locator('.moderation-item', { hasText: `plain-${suffix}` });
   await expect(noGpsCard.getByText('Для поиска ближайших категорий нужны координаты EXIF.')).toBeVisible();
   await expect(noGpsCard.locator('[data-nearby-url]')).toHaveCount(0);
   page.once('dialog', (dialog) => dialog.accept());

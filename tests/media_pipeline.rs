@@ -28,6 +28,8 @@ async fn preserves_supported_jpeg_bytes_and_extracts_exif_gps() {
                 "-GPSLongitude=27.5615",
                 "-GPSLongitudeRef=E",
                 "-DateTimeOriginal=2025:07:18 12:13:14",
+                "-EXIF:Artist=Fallback EXIF Artist",
+                "-XMP-dc:Creator=Ada Lovelace",
             ])
             .arg(&source),
     );
@@ -43,6 +45,7 @@ async fn preserves_supported_jpeg_bytes_and_extracts_exif_gps() {
     assert_eq!(upload.commons_category, "Buildings in Minsk");
     assert_eq!(upload.license, FIXED_UPLOAD_LICENSE);
     assert_eq!(upload.capture_date.as_deref(), Some("2025-07-18"));
+    assert_eq!(upload.author.as_deref(), Some("Ada Lovelace"));
     assert!((upload.latitude.unwrap() - 53.9045).abs() < 0.0001);
     assert!((upload.longitude.unwrap() - 27.5615).abs() < 0.0001);
     assert_eq!(
