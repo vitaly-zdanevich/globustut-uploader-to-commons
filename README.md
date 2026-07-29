@@ -95,6 +95,8 @@ To replace only the BotPassword on Toolforge, do not edit the repository or
 paste the password into a command:
 
 ```bash
+ssh login.toolforge.org
+become globustut-uploader-to-commons
 toolforge webservice shell
 cd /workspace
 ./scripts/run-toolforge.sh commons set-password
