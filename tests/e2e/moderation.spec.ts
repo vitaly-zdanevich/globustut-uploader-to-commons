@@ -125,6 +125,10 @@ test('Belarusian upload, moderation, category, preview, and publish workflow', a
   await expect(page.getByText(/Новая (?:публікацыя|публикация)/i)).toHaveCount(0);
   await expect(page.getByText(/Да 500 файлаў.+агульны аб'ём да 2 ГБ/)).toBeVisible();
   await expect(page.locator('input[name=license], input[name=rights_confirmed]')).toHaveCount(0);
+  await expect(page.locator('.brand-logo-link')).toHaveAttribute(
+    'href',
+    'https://globustut.by',
+  );
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
     .toBe(true);
 
@@ -198,6 +202,12 @@ test('Belarusian upload, moderation, category, preview, and publish workflow', a
   await expect(page.locator('.queue-title, .queue-heading h1')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Прэмадэрацыя' })).toHaveCount(0);
   await expect(page.getByText('Запампаваныя файлы')).toBeVisible();
+  await expect(page.locator('.admin-header')).toHaveCSS('position', 'static');
+  await expect(page.locator('.commons-publish')).toHaveCSS('border-top-style', 'none');
+  await expect(page.locator('.admin-header .brand-logo-link')).toHaveAttribute(
+    'href',
+    'https://globustut.by',
+  );
 
   let gpsCard = cardForOriginalFile(page, gpsFilename);
   let plainCard = cardForOriginalFile(page, plainFilename);
@@ -384,6 +394,10 @@ test('Belarusian upload, moderation, category, preview, and publish workflow', a
   await expect(publishForm.locator('input[data-publish-upload-id]')).toHaveCount(2);
   await expect(publishSpinner).toBeHidden();
   await publishButton.scrollIntoViewIfNeeded();
+  if (!mobile) {
+    await publishButton.hover();
+    await expect(publishButton).toHaveCSS('color', 'rgb(0, 0, 0)');
+  }
   await publishButton.click();
   await expect(publishButton).toBeDisabled();
   await expect(publishSpinner).toBeVisible();
@@ -419,7 +433,7 @@ test('Belarusian upload, moderation, category, preview, and publish workflow', a
   await expect(page.locator('.moderation-item')).toHaveCount(0);
   await expect(page.locator('[data-queue-count]')).toHaveText('0');
   await expect(page.locator('[data-queue-files]')).toHaveText('0 Б');
-  await expect(page.locator('[data-queue-disk]')).toHaveText('0 МБ / 20000 МБ');
+  await expect(page.locator('[data-queue-disk]')).toHaveText('0 МБ / 20 ГБ');
   await expect(page.getByRole('heading', { name: 'Чарга пустая' })).toBeVisible();
   await expect(page.locator('[data-pagination-slot] .pagination')).toHaveCount(0);
 });

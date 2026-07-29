@@ -628,6 +628,9 @@
       const storageLimitBytes = queueStats instanceof HTMLElement
         ? queueNumber(queueStats.dataset.storageLimitBytes)
         : 0;
+      const storageLimitLabel = queueStats instanceof HTMLElement
+        ? queueStats.dataset.storageLimitLabel
+        : '';
       const remainingCount = Math.max(0, totalCount - publishedCount);
       const remainingBytes = Math.max(0, storedBytes - publishedBytes);
       if (queueStats instanceof HTMLElement) {
@@ -640,7 +643,8 @@
         if (files) files.textContent = formatSize(remainingBytes);
         if (disk) {
           const mebibyte = 1024 * 1024;
-          disk.textContent = `${Math.floor(remainingBytes / mebibyte)} МБ / ${Math.floor(storageLimitBytes / mebibyte)} МБ`;
+          const fallbackLimit = `${Math.floor(storageLimitBytes / mebibyte)} МБ`;
+          disk.textContent = `${Math.floor(remainingBytes / mebibyte)} МБ / ${storageLimitLabel || fallbackLimit}`;
         }
       }
 

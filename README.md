@@ -74,6 +74,38 @@ cargo run -- commons set-password
 cargo run -- commons status
 ```
 
+### Changing the Commons account or password
+
+The publishing account is intentionally fixed at compile time. To use another
+Wikimedia account, edit both constants at the top of
+[`src/publisher.rs`](src/publisher.rs):
+
+```rust
+pub const COMMONS_ACCOUNT: &str = "NewAccount";
+pub const COMMONS_BOT_USERNAME: &str = "NewAccount@globustut-uploader";
+```
+
+`COMMONS_ACCOUNT` is the Wikimedia username shown in file links and used to
+verify completed uploads. `COMMONS_BOT_USERNAME` is the full BotPassword login
+in `Account@BotPasswordName` form. Create that BotPassword under the new account
+with the basic, upload, and page-editing grants, then commit and redeploy the
+code.
+
+To replace only the BotPassword on Toolforge, do not edit the repository or
+paste the password into a command:
+
+```bash
+toolforge webservice shell
+cd /workspace
+./scripts/run-toolforge.sh commons set-password
+exit
+toolforge webservice restart
+```
+
+The command prompts twice and replaces the private mode-`0600` password file.
+`commons status` confirms that the file exists; the credentials are validated
+against Commons when the next publication starts.
+
 Restart the server after changing the password. The browser sends the files
 visible on the current moderation page one at a time and appends their Commons
 links as each upload completes, so keep the page open until the batch finishes.

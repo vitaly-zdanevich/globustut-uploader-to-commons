@@ -116,6 +116,11 @@ h2 {
   border-bottom: 1px solid var(--border);
 }
 
+.brand-logo-link {
+  display: inline-flex;
+  flex: none;
+}
+
 .brand-header img {
   flex: none;
 }
@@ -625,9 +630,6 @@ h2 {
 }
 
 .admin-header {
-  position: sticky;
-  z-index: 30;
-  top: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -653,6 +655,11 @@ h2 {
   font-family: Arial, sans-serif;
   font-size: 0.92rem;
   font-weight: 700;
+  text-decoration: none;
+}
+
+.admin-brand-home {
+  color: inherit;
   text-decoration: none;
 }
 
@@ -922,7 +929,6 @@ h2 {
   gap: 1rem;
   margin-top: 32px;
   padding-top: 24px;
-  border-top: 1px solid var(--border);
 }
 
 .commons-publish-form {
@@ -940,6 +946,10 @@ h2 {
   width: min(100%, 420px);
   min-height: 54px;
   font-size: 0.92rem;
+}
+
+.commons-publish-button:hover {
+  color: #000;
 }
 
 .publish-spinner {
@@ -1157,7 +1167,7 @@ h2 {
     width: 100%;
   }
 
-  .admin-brand span {
+  .admin-brand-home {
     display: none;
   }
 

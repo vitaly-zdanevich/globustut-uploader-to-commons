@@ -28,7 +28,7 @@ pub fn upload_page(
         r#"
         <main class='upload-shell'>
           <header class='brand-header'>
-            <img src='/static/favicon.svg' width='44' height='44' alt=''>
+            <a class='brand-logo-link' href='https://globustut.by' aria-label='Глобус Беларусі'><img src='/static/favicon.svg' width='44' height='44' alt=''></a>
             <div><strong>Глобус Беларусі</strong><span>Фатаграфіі для Wikimedia Commons</span></div>
           </header>
           <section class='upload-workspace' aria-labelledby='upload-title'>
@@ -91,7 +91,7 @@ pub fn upload_results(results: &[SubmissionResult]) -> String {
         r#"
         <main class='upload-shell result-shell'>
           <header class='brand-header'>
-            <img src='/static/favicon.svg' width='44' height='44' alt=''>
+            <a class='brand-logo-link' href='https://globustut.by' aria-label='Глобус Беларусі'><img src='/static/favicon.svg' width='44' height='44' alt=''></a>
             <div><strong>Глобус Беларусі</strong><span>Фатаграфіі для Wikimedia Commons</span></div>
           </header>
           <section class='upload-workspace' aria-labelledby='result-title'>
@@ -120,7 +120,7 @@ pub fn login_page(error: Option<&str>) -> String {
         <main class='login-shell'>
           <section class='login-panel' aria-labelledby='login-title'>
             <header class='brand-header compact'>
-              <img src='/static/favicon.svg' width='40' height='40' alt=''>
+              <a class='brand-logo-link' href='https://globustut.by' aria-label='Глобус Беларусі'><img src='/static/favicon.svg' width='40' height='40' alt=''></a>
               <div><strong>Глобус Беларусі</strong><span>Прэмадэрацыя</span></div>
             </header>
             <h1 id='login-title'>Уваход</h1>
@@ -160,7 +160,7 @@ pub fn admin_page(data: AdminPageData<'_>) -> String {
         );
     }
     let disk_used_mib = mebibytes(data.stored_bytes);
-    let disk_total_mib = mebibytes(data.storage_limit_bytes);
+    let storage_limit = format_storage_limit(data.storage_limit_bytes);
     let commons_files_link = data
         .commons_account
         .map(str::trim)
@@ -212,17 +212,20 @@ pub fn admin_page(data: AdminPageData<'_>) -> String {
         r#"
         <header class='admin-header'>
           <div class='admin-header-primary'>
-            <a class='admin-brand' href='/admin'><img src='/static/favicon.svg' width='34' height='34' alt=''><span>Глобус Беларусі</span></a>
+            <div class='admin-brand'>
+              <a class='brand-logo-link' href='https://globustut.by' aria-label='Глобус Беларусі'><img src='/static/favicon.svg' width='34' height='34' alt=''></a>
+              <a class='admin-brand-home' href='/admin'>Глобус Беларусі</a>
+            </div>
             {commons_files_link}
           </div>
           <div class='admin-account'><span>{username}</span><form action='/admin/logout' method='post'><input type='hidden' name='csrf_token' value='{csrf}'><button class='quiet-button' type='submit'>Выйсці</button></form></div>
         </header>
         <main class='admin-main'>
           <div class='queue-heading'>
-            <dl class='queue-stats' data-queue-stats data-total-count='{total_count}' data-stored-bytes='{stored_bytes}' data-storage-limit-bytes='{storage_limit_bytes}'>
+            <dl class='queue-stats' data-queue-stats data-total-count='{total_count}' data-stored-bytes='{stored_bytes}' data-storage-limit-bytes='{storage_limit_bytes}' data-storage-limit-label='{storage_limit}'>
               <div><dt>У чарзе</dt><dd data-queue-count>{total_count}</dd></div>
               <div><dt>Файлы</dt><dd data-queue-files>{stored_size}</dd></div>
-              <div><dt>Дыск</dt><dd data-queue-disk>{disk_used_mib} МБ / {disk_total_mib} МБ</dd></div>
+              <div><dt>Дыск</dt><dd data-queue-disk>{disk_used_mib} МБ / {storage_limit}</dd></div>
             </dl>
           </div>
           <div class='moderation-list'>{items}</div>
@@ -443,6 +446,21 @@ fn mebibytes(bytes: u64) -> u64 {
     bytes / (1024 * 1024)
 }
 
+fn format_storage_limit(bytes: u64) -> String {
+    let mebibytes = mebibytes(bytes);
+    if mebibytes < 1000 {
+        return format!("{mebibytes} МБ");
+    }
+
+    let whole_gigabytes = mebibytes / 1000;
+    let tenths = (mebibytes % 1000) / 100;
+    if tenths == 0 {
+        format!("{whole_gigabytes} ГБ")
+    } else {
+        format!("{whole_gigabytes}.{tenths} ГБ")
+    }
+}
+
 fn format_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
     let mut size = bytes as f64;
@@ -512,6 +530,9 @@ mod tests {
         assert!(html.contains("Аўтар будзе пазначаны паводле метаданых."));
         assert!(html.contains("Дадаць фатаграфіі/відэа"));
         assert!(html.contains("Дзякуй за захаванне культурнай спадчыны"));
+        assert!(html.contains(
+            "class='brand-logo-link' href='https://globustut.by' aria-label='Глобус Беларусі'"
+        ));
         assert!(!html.contains("Новая публикация"));
         assert!(!html.contains("class=\""));
     }
@@ -569,7 +590,12 @@ mod tests {
         assert!(!html.contains("<span class='visually-hidden'>Імя файла</span>"));
         assert!(!html.contains("Съёмка"));
         assert!(!html.contains("Лицензия"));
-        assert!(html.contains("100 МБ / 2500 МБ"));
+        assert!(html.contains("100 МБ / 2.5 ГБ"));
+        assert!(html.contains("data-storage-limit-label='2.5 ГБ'"));
+        assert!(html.contains(
+            "class='brand-logo-link' href='https://globustut.by' aria-label='Глобус Беларусі'"
+        ));
+        assert!(html.contains("class='admin-brand-home' href='/admin'"));
         assert!(html.contains("Special:ListFiles/Test%20Photographer"));
         assert!(html.contains("name='upload_id' value='upload-one'"));
         assert!(html.contains("data-publish-size-bytes='1024'"));
