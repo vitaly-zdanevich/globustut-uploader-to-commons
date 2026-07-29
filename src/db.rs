@@ -1,4 +1,6 @@
+use crate::commons::validate_categories;
 use anyhow::{Context, Result, bail};
+use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +35,7 @@ pub struct UploadRecord {
     pub longitude: Option<f64>,
     pub capture_date: Option<String>,
     pub author: Option<String>,
-    pub commons_category: String,
+    pub commons_categories: Vec<String>,
     pub license: String,
     pub uploader_username: String,
     pub created_at: i64,
@@ -97,6 +99,7 @@ impl Database {
                     capture_date TEXT,
                     author TEXT,
                     commons_category TEXT NOT NULL,
+                    commons_categories_json TEXT,
                     license TEXT NOT NULL,
                     uploader_username TEXT NOT NULL,
                     created_at INTEGER NOT NULL
@@ -265,16 +268,24 @@ impl Database {
     }
 
     pub async fn insert_upload(&self, upload: UploadRecord) -> Result<()> {
+        let commons_categories = validate_categories(&upload.commons_categories)?;
+        let commons_category = commons_categories
+            .first()
+            .context("validated category list is empty")?
+            .clone();
+        let commons_categories_json =
+            serde_json::to_string(&commons_categories).context("failed to encode categories")?;
         self.with_connection(move |connection| {
             connection.execute(
                 r#"INSERT INTO uploads(
                     id, stored_filename, original_filename, display_filename,
                     mime_type, media_kind, size_bytes, original_size_bytes,
                     converted, width, height, latitude, longitude, capture_date,
-                    author, commons_category, license, uploader_username, created_at
+                    author, commons_category, commons_categories_json, license,
+                    uploader_username, created_at
                 ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                    ?13, ?14, ?15, ?16, ?17, ?18, ?19
+                    ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
                 )"#,
                 params![
                     upload.id,
@@ -292,7 +303,8 @@ impl Database {
                     upload.longitude,
                     upload.capture_date,
                     upload.author,
-                    upload.commons_category,
+                    commons_category,
+                    commons_categories_json,
                     upload.license,
                     upload.uploader_username,
                     upload.created_at,
@@ -310,7 +322,8 @@ impl Database {
                     id, stored_filename, original_filename, display_filename,
                     mime_type, media_kind, size_bytes, original_size_bytes,
                     converted, width, height, latitude, longitude, capture_date,
-                    author, commons_category, license, uploader_username, created_at
+                    author, commons_category, commons_categories_json, license,
+                    uploader_username, created_at
                 FROM uploads
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?1 OFFSET ?2"#,
@@ -330,7 +343,8 @@ impl Database {
                         id, stored_filename, original_filename, display_filename,
                         mime_type, media_kind, size_bytes, original_size_bytes,
                         converted, width, height, latitude, longitude, capture_date,
-                        author, commons_category, license, uploader_username, created_at
+                        author, commons_category, commons_categories_json, license,
+                        uploader_username, created_at
                     FROM uploads WHERE id = ?1"#,
                     [id],
                     row_to_upload,
@@ -353,13 +367,25 @@ impl Database {
         .await
     }
 
-    pub async fn update_category(&self, id: &str, category: &str) -> Result<bool> {
+    pub async fn replace_categories<S: AsRef<str>>(
+        &self,
+        id: &str,
+        categories: &[S],
+    ) -> Result<bool> {
         let id = id.to_string();
-        let category = category.to_string();
+        let categories = validate_categories(categories)?;
+        let primary_category = categories
+            .first()
+            .context("validated category list is empty")?
+            .clone();
+        let categories_json =
+            serde_json::to_string(&categories).context("failed to encode categories")?;
         self.with_connection(move |connection| {
             Ok(connection.execute(
-                "UPDATE uploads SET commons_category = ?1 WHERE id = ?2",
-                params![category, id],
+                "UPDATE uploads \
+                 SET commons_category = ?1, commons_categories_json = ?2 \
+                 WHERE id = ?3",
+                params![primary_category, categories_json, id],
             )? > 0)
         })
         .await
@@ -416,6 +442,9 @@ impl Database {
 }
 
 fn row_to_upload(row: &rusqlite::Row<'_>) -> rusqlite::Result<UploadRecord> {
+    let legacy_category = row.get::<_, String>(15)?;
+    let categories_json = row.get::<_, Option<String>>(16)?;
+    let commons_categories = decode_categories(&legacy_category, categories_json.as_deref(), 16)?;
     Ok(UploadRecord {
         id: row.get(0)?,
         stored_filename: row.get(1)?,
@@ -432,34 +461,81 @@ fn row_to_upload(row: &rusqlite::Row<'_>) -> rusqlite::Result<UploadRecord> {
         longitude: row.get(12)?,
         capture_date: row.get(13)?,
         author: row.get(14)?,
-        commons_category: row.get(15)?,
-        license: row.get(16)?,
-        uploader_username: row.get(17)?,
-        created_at: row.get(18)?,
+        commons_categories,
+        license: row.get(17)?,
+        uploader_username: row.get(18)?,
+        created_at: row.get(19)?,
     })
+}
+
+fn decode_categories(
+    legacy_category: &str,
+    categories_json: Option<&str>,
+    column_index: usize,
+) -> rusqlite::Result<Vec<String>> {
+    let Some(categories_json) = categories_json else {
+        return Ok(vec![legacy_category.to_string()]);
+    };
+    let categories: Vec<String> = serde_json::from_str(categories_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(column_index, Type::Text, Box::new(error))
+    })?;
+    let validated = validate_categories(&categories)
+        .map_err(|error| invalid_category_list(column_index, error.to_string()))?;
+    if validated != categories {
+        return Err(invalid_category_list(
+            column_index,
+            "stored category list is not normalized or contains duplicates",
+        ));
+    }
+    if categories.first().map(String::as_str) != Some(legacy_category) {
+        return Err(invalid_category_list(
+            column_index,
+            "legacy primary category does not match stored category list",
+        ));
+    }
+    Ok(categories)
+}
+
+fn invalid_category_list(column_index: usize, message: impl Into<String>) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column_index,
+        Type::Text,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message.into(),
+        )),
+    )
 }
 
 fn migrate_schema(connection: &Connection) -> Result<()> {
     let version = connection.query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))?;
-    if version >= 2 {
+    if version >= 3 {
         return Ok(());
     }
 
     let transaction = connection.unchecked_transaction()?;
-    let has_author = {
-        let mut statement = transaction.prepare("PRAGMA table_info(uploads)")?;
-        let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-        columns
-            .collect::<rusqlite::Result<Vec<_>>>()?
-            .iter()
-            .any(|column| column == "author")
-    };
-    if !has_author {
+    if version < 2 && !table_has_column(&transaction, "uploads", "author")? {
         transaction.execute("ALTER TABLE uploads ADD COLUMN author TEXT", [])?;
     }
-    transaction.pragma_update(None, "user_version", 2)?;
+    // Legacy rows keep using commons_category until a moderator replaces their list.
+    if !table_has_column(&transaction, "uploads", "commons_categories_json")? {
+        transaction.execute(
+            "ALTER TABLE uploads ADD COLUMN commons_categories_json TEXT",
+            [],
+        )?;
+    }
+    transaction.pragma_update(None, "user_version", 3)?;
     transaction.commit()?;
     Ok(())
+}
+
+fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    Ok(columns
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .iter()
+        .any(|candidate| candidate == column))
 }
 
 fn normalized_username(username: &str) -> Result<String> {
@@ -503,7 +579,7 @@ mod tests {
             longitude: Some(27.5667),
             capture_date: None,
             author: Some("Example Photographer".into()),
-            commons_category: "Minsk".into(),
+            commons_categories: vec!["Minsk".into(), "Belarus".into()],
             license: "cc-by-4.0".into(),
             uploader_username: "Example".into(),
             created_at: 1,
@@ -563,18 +639,63 @@ mod tests {
         );
 
         db.insert_upload(upload("one")).await.unwrap();
+        let mut second_upload = upload("two");
+        second_upload.created_at = 2;
+        db.insert_upload(second_upload).await.unwrap();
+        let mut tied_upload = upload("zulu");
+        tied_upload.created_at = 2;
+        db.insert_upload(tied_upload).await.unwrap();
         let uploads = db.list_uploads(10, 0).await.unwrap();
-        assert_eq!(uploads.len(), 1);
-        assert_eq!(uploads[0].author.as_deref(), Some("Example Photographer"));
-        assert!(db.update_category("one", "Belarus").await.unwrap());
+        assert_eq!(uploads.len(), 3);
+        assert_eq!(uploads[2].author.as_deref(), Some("Example Photographer"));
+        assert_eq!(uploads[2].commons_categories, ["Minsk", "Belarus"]);
+        assert!(
+            db.replace_categories(
+                "one",
+                &["Category:Castles_in_Belarus", "Minsk", "Castles in Belarus",],
+            )
+            .await
+            .unwrap()
+        );
         assert_eq!(
             db.get_upload("one")
                 .await
                 .unwrap()
                 .unwrap()
-                .commons_category,
-            "Belarus"
+                .commons_categories,
+            ["Castles in Belarus", "Minsk"]
         );
+        assert!(
+            db.replace_categories::<&str>("one", &[]).await.is_err(),
+            "an upload must retain at least one category"
+        );
+        assert!(
+            db.replace_categories("one", &["Minsk", "Bad[title]"])
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            db.get_upload("one")
+                .await
+                .unwrap()
+                .unwrap()
+                .commons_categories,
+            ["Castles in Belarus", "Minsk"],
+            "a rejected replacement must not partially update the upload"
+        );
+        assert!(!db.replace_categories("missing", &["Minsk"]).await.unwrap());
+
+        let connection = rusqlite::Connection::open(db.path()).unwrap();
+        let stored: (String, String) = connection
+            .query_row(
+                "SELECT commons_category, commons_categories_json FROM uploads WHERE id = 'one'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored.0, "Castles in Belarus");
+        assert_eq!(stored.1, r#"["Castles in Belarus","Minsk"]"#);
+        drop(connection);
     }
 
     #[tokio::test]
@@ -585,6 +706,13 @@ mod tests {
         connection
             .execute_batch(
                 r#"
+                CREATE TABLE users (
+                    username TEXT PRIMARY KEY COLLATE NOCASE,
+                    password_hash TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                INSERT INTO users VALUES ('admin', 'existing-hash', 1);
+
                 CREATE TABLE uploads (
                     id TEXT PRIMARY KEY,
                     stored_filename TEXT NOT NULL UNIQUE,
@@ -619,9 +747,14 @@ mod tests {
         let db = Database::new(&path);
         db.initialize().await.unwrap();
         db.initialize().await.unwrap();
+        assert_eq!(
+            db.password_hash("admin").await.unwrap().as_deref(),
+            Some("existing-hash")
+        );
 
         let legacy = db.get_upload("legacy").await.unwrap().unwrap();
         assert!(legacy.author.is_none());
+        assert_eq!(legacy.commons_categories, ["Minsk"]);
         db.insert_upload(upload("new")).await.unwrap();
         assert_eq!(
             db.get_upload("new")
@@ -644,7 +777,96 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 2);
+        let category_columns: u32 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('uploads') \
+                 WHERE name = 'commons_categories_json'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let legacy_json: Option<String> = connection
+            .query_row(
+                "SELECT commons_categories_json FROM uploads WHERE id = 'legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 3);
         assert_eq!(author_columns, 1);
+        assert_eq!(category_columns, 1);
+        assert!(legacy_json.is_none());
+    }
+
+    #[tokio::test]
+    async fn migrates_v2_category_storage_and_rejects_invalid_json() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("test.sqlite3");
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE users (
+                    username TEXT PRIMARY KEY COLLATE NOCASE,
+                    password_hash TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                INSERT INTO users VALUES ('admin', 'existing-hash', 1);
+
+                CREATE TABLE uploads (
+                    id TEXT PRIMARY KEY,
+                    stored_filename TEXT NOT NULL UNIQUE,
+                    original_filename TEXT NOT NULL,
+                    display_filename TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    media_kind TEXT NOT NULL CHECK (media_kind IN ('image', 'video')),
+                    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+                    original_size_bytes INTEGER NOT NULL CHECK (original_size_bytes >= 0),
+                    converted INTEGER NOT NULL CHECK (converted IN (0, 1)),
+                    width INTEGER,
+                    height INTEGER,
+                    latitude REAL,
+                    longitude REAL,
+                    capture_date TEXT,
+                    author TEXT,
+                    commons_category TEXT NOT NULL,
+                    license TEXT NOT NULL,
+                    uploader_username TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                INSERT INTO uploads VALUES (
+                    'legacy', 'legacy.jpg', 'legacy.jpg', 'Legacy.jpg',
+                    'image/jpeg', 'image', 10, 10, 0, 1, 1, NULL, NULL, NULL,
+                    'Legacy Author', 'Minsk', 'cc-by-4.0', 'anonymous', 1
+                );
+                PRAGMA user_version = 2;
+                "#,
+            )
+            .unwrap();
+        drop(connection);
+
+        let db = Database::new(&path);
+        db.initialize().await.unwrap();
+        assert_eq!(
+            db.password_hash("admin").await.unwrap().as_deref(),
+            Some("existing-hash")
+        );
+        let legacy = db.get_upload("legacy").await.unwrap().unwrap();
+        assert_eq!(legacy.author.as_deref(), Some("Legacy Author"));
+        assert_eq!(legacy.commons_categories, ["Minsk"]);
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
+        connection
+            .execute(
+                "UPDATE uploads SET commons_categories_json = '[]' WHERE id = 'legacy'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        assert!(db.get_upload("legacy").await.is_err());
     }
 }

@@ -1,8 +1,6 @@
 # Globustut uploader to Commons
 
-Rust service for accepting freely licensed media from [Глобус Беларуси](https://globustut.by/), holding it in a private moderation queue, and preparing its metadata for Wikimedia Commons.
-
-This MVP **does not upload anything to Wikimedia Commons**. It stores accepted files on the Toolforge NFS volume until a moderator deletes them. Consequently, this release does not yet solve long-term storage pressure by itself.
+Rust service for accepting freely licensed media from [Глобус Беларусі](https://globustut.by/), holding it in a private moderation queue, and publishing approved files to Wikimedia Commons.
 
 ## Included in the MVP
 
@@ -14,12 +12,15 @@ This MVP **does not upload anything to Wikimedia Commons**. It stores accepted f
 - acceptance of already compatible WebM, Ogg Theora, and MPEG-1/2 video, with no video conversion;
 - EXIF/XMP author, capture date, and GPS extraction, with an OpenStreetMap link in moderation;
 - local SQLite moderator accounts using Argon2id passwords and private sessions;
-- rename, category change, and permanent deletion controls;
+- rename, multi-category editing with automatic persistence, and permanent deletion controls;
 - Commons category autocomplete plus up to 20 closest categories from Wikidata `P625` and `P373`;
+- sequential publication to Commons through the single `Globustut` account, with a direct link returned for every published file and local cleanup after success;
+- full-viewport image previews on mouse hover in moderation;
 - responsive light/dark UI, with an exact `#000` dark page background;
+- Belarusian-only user interface;
 - unit, media integration, HTTP workflow, and Playwright desktop/mobile tests.
 
-There is deliberately no OAuth code. Local login protects only `/admin`. A future Commons publisher will use one service-owned account configured by the operator; its password or token must be supplied through Toolforge secrets, never committed or entered by uploaders.
+There is deliberately no OAuth code. Local login protects only `/admin` and is unrelated to the Commons account. Publishing uses the dedicated BotPassword login `Globustut@globustut-uploader`; the password lives in a mode-`0600` file under the private Toolforge data directory and is never stored in SQLite, committed, sent to the browser, or logged.
 
 ## Image normalization
 
@@ -63,6 +64,22 @@ cargo run -- user delete another-moderator
 
 Passwords must contain at least 12 characters. For non-interactive setup, put a password in a short-lived environment variable and use `user add NAME --password-env VARIABLE`.
 
+Configure the fixed Commons publishing account with a dedicated
+[BotPassword](https://commons.wikimedia.org/wiki/Special:BotPasswords) named
+`globustut-uploader`. It needs the basic, upload, and page-editing grants. The
+interactive command writes only the password:
+
+```bash
+cargo run -- commons set-password
+cargo run -- commons status
+```
+
+Restart the server after changing the password. The browser sends the files
+visible on the current moderation page one at a time and appends their Commons
+links as each upload completes, so keep the page open until the batch finishes.
+A successfully published file is removed from the local queue; failed files
+remain available for retry.
+
 ## Configuration
 
 The defaults are shown in [.env.example](.env.example). Important settings are:
@@ -79,17 +96,19 @@ The defaults are shown in [.env.example](.env.example). Important settings are:
 | `MAX_PIXELS` | `250000000` | image decompression safety limit |
 | `REQUEST_TIMEOUT_SECONDS` | `3600` | complete request deadline |
 | `SESSION_TTL_HOURS` | `12` | moderator session lifetime |
+| `COMMONS_API_TIMEOUT_SECONDS` | `300` | timeout for one Commons API request |
+| `COMMONS_BOT_PASSWORD_FILE` | private data directory | dedicated BotPassword file |
 | `NEARBY_RADIUS_METERS` | `10000` | Wikidata geographic search radius |
 | `NEARBY_CATEGORY_LIMIT` | `20` | result limit, always clamped to 20 |
 | `PUBLIC_BASE_URL` | inferred | public URL and secure-cookie default |
 
 The per-file, file-count, and submission limits are independent. A batch may contain up to 500 files only when their combined file payload remains within 2 GiB; the HTTP body limit includes a small additional allowance for multipart headers.
 
-SQLite uses one connection per blocking operation, full synchronous writes, and rollback journaling. The Toolforge service therefore runs exactly one replica. This is suitable for a low-volume moderation queue; move the database to ToolsDB before scaling replicas or write volume.
+SQLite uses one connection per blocking operation, full synchronous writes, and rollback journaling. The Toolforge service therefore runs exactly one replica. This is suitable for a low-volume moderation queue; move the database to ToolsDB before scaling replicas or write volume. The admin disk counter shows indexed queue bytes against `MAX_PENDING_MB`; the separate free-space check still uses the underlying filesystem.
 
 Startup reconciliation removes unindexed files left by a prior crash. App-owned directories and the database use private filesystem permissions. Back up the SQLite file and `pending/` together while the webservice is stopped for a consistent manual snapshot.
 
-Category syntax is checked against the main MediaWiki title restrictions, but existence is not required because a Commons outage must not block intake. The autocomplete and current-category link let the moderator verify or create an intentional red-link category later.
+Category syntax is checked against the main MediaWiki title restrictions, but existence is not required because a Commons outage must not block intake. The autocomplete and category links let the moderator verify or create an intentional red-link category later.
 
 ## Tests
 
@@ -126,12 +145,14 @@ cd source
 
 Both paths use the public repository as Build Service input, install `service.template`, build, start or restart the service, and wait for `/healthz`. The local wrapper only performs a fast-forward pull; it does not overwrite remote changes.
 
-Create the first local moderator inside the built image:
+Create the first local moderator and configure the Commons BotPassword inside
+the built image:
 
 ```bash
 toolforge webservice shell
 cd /workspace
 ./scripts/run-toolforge.sh user add moderator
+./scripts/run-toolforge.sh commons set-password
 exit
 ```
 
@@ -152,7 +173,7 @@ Resolve these points with Toolforge administrators before enabling the public fo
 1. The current intake route is anonymous because that is the requested product flow. Toolforge's rules generally require users who publish content through a tool to be registered and validated. Confirm that private, premoderated staging qualifies, or add an accepted uploader-authentication mechanism. The local moderator password is not uploader validation.
 2. Pending images and EXIF GPS are private user data stored outside Commons. Publish a retention/privacy policy, limit moderator access, and delete rejected media promptly.
 3. The queue has a byte cap and disk reserve, but public intake still needs operational monitoring and a retention decision before launch.
-4. The server assigns CC BY 4.0 to every upload; moderation must still check authorship, permission, privacy, Commons scope, and filename/category collisions before future publication.
+4. The server assigns CC BY 4.0 to every upload; moderation must still check authorship, permission, privacy, Commons scope, and filename/category collisions before publication.
 
 Relevant platform documentation: [Toolforge Build Service](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Build_service), [webservices](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Web), [Kubernetes storage](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Kubernetes), [Toolforge rules](https://wikitech.wikimedia.org/wiki/Help%3AToolforge/Rules), and [Wikimedia Cloud Services terms](https://wikitech.wikimedia.org/wiki/Cloud_Services_Terms_of_use).
 

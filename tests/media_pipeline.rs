@@ -36,13 +36,17 @@ async fn preserves_supported_jpeg_bytes_and_extracts_exif_gps() {
     let original = std::fs::read(&source).unwrap();
 
     let upload = processor
-        .ingest(&source, "Minsk photo.JPG", "Category:Buildings_in_Minsk")
+        .ingest(
+            &source,
+            "Minsk photo.JPG",
+            &["Category:Buildings_in_Minsk", "Minsk"],
+        )
         .await
         .unwrap();
 
     assert!(!upload.converted);
     assert_eq!(upload.display_filename, "Minsk photo.jpg");
-    assert_eq!(upload.commons_category, "Buildings in Minsk");
+    assert_eq!(upload.commons_categories, ["Buildings in Minsk", "Minsk"]);
     assert_eq!(upload.license, FIXED_UPLOAD_LICENSE);
     assert_eq!(upload.capture_date.as_deref(), Some("2025-07-18"));
     assert_eq!(upload.author.as_deref(), Some("Ada Lovelace"));
@@ -71,7 +75,7 @@ async fn converts_bmp_to_commons_compatible_webp() {
             .arg(&source),
     );
     let upload = processor
-        .ingest(&source, "camera.BMP", "Belarus")
+        .ingest(&source, "camera.BMP", &["Belarus"])
         .await
         .unwrap();
 
@@ -103,7 +107,7 @@ async fn extracts_embedded_jpeg_from_dng_before_conversion() {
     write_dng_with_preview(&source, &preview_bytes, 48, 32);
 
     let upload = processor
-        .ingest(&source, "camera.DNG", "Belarus")
+        .ingest(&source, "camera.DNG", &["Belarus"])
         .await
         .unwrap();
 
@@ -129,7 +133,7 @@ async fn converts_dng_to_webp_when_it_has_no_embedded_jpeg() {
     write_raw_dng(&source, 32, 24);
 
     let upload = processor
-        .ingest(&source, "camera.dng", "Belarus")
+        .ingest(&source, "camera.dng", &["Belarus"])
         .await
         .unwrap();
 
@@ -158,7 +162,7 @@ async fn does_not_treat_an_ordinary_tiff_named_dng_as_raw() {
     );
     let original = std::fs::read(&source).unwrap();
     let upload = processor
-        .ingest(&source, "misnamed.dng", "Belarus")
+        .ingest(&source, "misnamed.dng", &["Belarus"])
         .await
         .unwrap();
 
@@ -183,7 +187,7 @@ async fn rejects_non_media_content() {
     std::fs::write(&source, b"not an image or video").unwrap();
 
     let error = processor
-        .ingest(&source, "fake.jpg", "Belarus")
+        .ingest(&source, "fake.jpg", &["Belarus"])
         .await
         .unwrap_err();
     assert!(error.to_string().contains("unsupported or invalid"));
@@ -205,7 +209,7 @@ async fn startup_cleanup_removes_orphans_but_preserves_indexed_media() {
             .arg(&source),
     );
     let upload = processor
-        .ingest(&source, "kept.jpg", "Belarus")
+        .ingest(&source, "kept.jpg", &["Belarus"])
         .await
         .unwrap();
     let kept_media = processor.stored_path(&upload).unwrap();

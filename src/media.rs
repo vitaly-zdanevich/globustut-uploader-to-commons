@@ -1,5 +1,5 @@
 use crate::auth::now_ts;
-use crate::commons::validate_category;
+use crate::commons::validate_categories;
 use crate::config::Config;
 use crate::db::{Database, UploadRecord};
 use anyhow::{Context, Result, bail};
@@ -103,11 +103,11 @@ impl MediaProcessor {
         }
     }
 
-    pub async fn ingest(
+    pub async fn ingest<S: AsRef<str>>(
         &self,
         temporary_path: &Path,
         original_filename: &str,
-        commons_category: &str,
+        commons_categories: &[S],
     ) -> Result<UploadRecord> {
         let original_size_bytes = tokio::fs::metadata(temporary_path)
             .await
@@ -133,7 +133,7 @@ impl MediaProcessor {
         self.ensure_disk_space(original_size_bytes).await?;
 
         let probe = self.probe(temporary_path).await?;
-        let category = validate_category(commons_category)?;
+        let categories = validate_categories(commons_categories)?;
         let id = Uuid::new_v4().to_string();
         let mut converted_cleanup = None;
 
@@ -256,7 +256,7 @@ impl MediaProcessor {
             longitude: metadata.longitude,
             capture_date: metadata.capture_date,
             author: metadata.author,
-            commons_category: category,
+            commons_categories: categories,
             license: FIXED_UPLOAD_LICENSE.to_string(),
             uploader_username: "anonymous".into(),
             created_at: now_ts(),
@@ -1492,7 +1492,7 @@ mod tests {
     use super::{
         MAX_AUTHOR_BYTES, MAX_COMMONS_FILENAME_BYTES, exif_date, extract_exif_internal,
         image_probe_from_vips_loader, initial_display_filename, renamed_display_filename,
-        safe_child_path, sanitize_author, validate_category, validate_dimensions,
+        safe_child_path, sanitize_author, validate_categories, validate_dimensions,
     };
     use std::path::Path;
 
@@ -1539,10 +1539,10 @@ mod tests {
     #[test]
     fn validates_categories_dimensions_and_dates() {
         assert_eq!(
-            validate_category("Category:Castles_in_Belarus").unwrap(),
-            "Castles in Belarus"
+            validate_categories(&["Category:Castles_in_Belarus"]).unwrap(),
+            ["Castles in Belarus"]
         );
-        assert!(validate_category("\n").is_err());
+        assert!(validate_categories(&["\n"]).is_err());
         assert!(validate_dimensions(10, 20, 200).is_ok());
         assert!(validate_dimensions(10, 21, 200).is_err());
         assert_eq!(

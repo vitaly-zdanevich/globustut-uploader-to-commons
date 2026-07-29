@@ -24,6 +24,8 @@ pub fn test_config(root: &Path) -> Config {
         cookie_secure: false,
         public_base_url: "http://127.0.0.1".into(),
         commons_api_url: "https://commons.wikimedia.org/w/api.php".into(),
+        commons_api_timeout_seconds: 30,
+        commons_bot_password_path: root.join("data/commons-bot-password"),
         wikidata_sparql_url: "https://query.wikidata.org/sparql".into(),
         nearby_radius_meters: 10_000,
         nearby_limit: 20,

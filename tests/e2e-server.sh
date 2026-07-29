@@ -27,13 +27,16 @@ export PUBLIC_BASE_URL="http://127.0.0.1:$PORT"
 export COOKIE_SECURE=false
 export DISK_RESERVE_MB=0
 export COMMONS_API_URL="http://127.0.0.1:$E2E_MOCK_PORT/w/api.php"
+export COMMONS_BOT_PASSWORD_FILE="$DATA_ROOT/data/commons-bot-password"
 export WIKIDATA_SPARQL_URL="http://127.0.0.1:$E2E_MOCK_PORT/sparql"
 export E2E_ADMIN_PASSWORD='correct horse battery staple'
+export E2E_COMMONS_BOT_PASSWORD='mock Commons BotPassword'
 export RUST_LOG=warn
 
 node ./tests/mock-wikimedia-server.mjs &
 MOCK_PID="$!"
 cargo run --quiet -- user add moderator --password-env E2E_ADMIN_PASSWORD
+cargo run --quiet -- commons set-password --password-env E2E_COMMONS_BOT_PASSWORD
 cargo run --quiet -- serve &
 SERVER_PID="$!"
 wait "$SERVER_PID"

@@ -17,7 +17,7 @@ export default defineConfig({
     command: './tests/e2e-server.sh',
     url: `http://127.0.0.1:${e2ePort}/healthz`,
     timeout: 120_000,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
   },
   projects: [
     {

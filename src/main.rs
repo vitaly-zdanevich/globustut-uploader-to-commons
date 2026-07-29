@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use globustut_uploader_to_commons::auth::{hash_password_async, now_ts};
 use globustut_uploader_to_commons::config::Config;
 use globustut_uploader_to_commons::db::Database;
+use globustut_uploader_to_commons::publisher::{COMMONS_BOT_USERNAME, store_bot_password};
 use globustut_uploader_to_commons::web::{AppState, router};
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -25,6 +26,11 @@ enum Command {
         #[command(subcommand)]
         command: UserCommand,
     },
+    /// Configure the single Wikimedia Commons publishing account.
+    Commons {
+        #[command(subcommand)]
+        command: CommonsCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -40,6 +46,18 @@ enum UserCommand {
     Delete { username: String },
     /// List usernames (password hashes are never printed).
     List,
+}
+
+#[derive(Debug, Subcommand)]
+enum CommonsCommand {
+    /// Store the dedicated BotPassword in the private data directory.
+    SetPassword {
+        /// Read the BotPassword from this environment variable instead of prompting.
+        #[arg(long)]
+        password_env: Option<String>,
+    },
+    /// Show whether the BotPassword file is configured.
+    Status,
 }
 
 #[tokio::main]
@@ -58,6 +76,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::User { command } => manage_user(db, command).await,
+        Command::Commons { command } => manage_commons(&config, command),
     }
 }
 
@@ -110,6 +129,36 @@ async fn manage_user(db: Database, command: UserCommand) -> Result<()> {
         UserCommand::List => {
             for username in db.list_users().await? {
                 println!("{username}");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn manage_commons(config: &Config, command: CommonsCommand) -> Result<()> {
+    match command {
+        CommonsCommand::SetPassword { password_env } => {
+            let password = if let Some(variable) = password_env {
+                std::env::var(&variable).with_context(|| format!("{variable} is not set"))?
+            } else {
+                let first = rpassword::prompt_password("Commons BotPassword: ")?;
+                let second = rpassword::prompt_password("Repeat Commons BotPassword: ")?;
+                if first != second {
+                    bail!("passwords do not match");
+                }
+                first
+            };
+            store_bot_password(&config.commons_bot_password_path, &password)?;
+            println!(
+                "Wikimedia Commons account {COMMONS_BOT_USERNAME} is configured. Restart the webservice."
+            );
+            Ok(())
+        }
+        CommonsCommand::Status => {
+            if config.commons_bot_password_path.is_file() {
+                println!("Wikimedia Commons account {COMMONS_BOT_USERNAME} is configured.");
+            } else {
+                println!("Wikimedia Commons account {COMMONS_BOT_USERNAME} is not configured.");
             }
             Ok(())
         }

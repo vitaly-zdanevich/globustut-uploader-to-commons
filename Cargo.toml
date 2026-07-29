@@ -15,11 +15,12 @@ html-escape = "0.2"
 kamadak-exif = "0.5"
 nix = { version = "0.31", features = ["fs"] }
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "multipart", "rustls-tls"] }
 rpassword = "7"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.10"
 sha2 = "0.10"
 tempfile = "3"
 time = { version = "0.3", features = ["formatting", "macros"] }

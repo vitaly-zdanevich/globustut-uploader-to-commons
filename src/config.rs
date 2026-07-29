@@ -31,6 +31,8 @@ pub struct Config {
     pub cookie_secure: bool,
     pub public_base_url: String,
     pub commons_api_url: String,
+    pub commons_api_timeout_seconds: u64,
+    pub commons_bot_password_path: PathBuf,
     pub wikidata_sparql_url: String,
     pub nearby_radius_meters: u32,
     pub nearby_limit: u32,
@@ -76,6 +78,9 @@ impl Config {
         let database_path = nonempty_env("DATABASE_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| data_dir.join("globustut.sqlite3"));
+        let commons_bot_password_path = nonempty_env("COMMONS_BOT_PASSWORD_FILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| data_dir.join("commons-bot-password"));
 
         let port = parse_env("PORT", 8000_u16)?;
         let bind_ip = nonempty_env("BIND_ADDR")
@@ -122,6 +127,8 @@ impl Config {
             public_base_url,
             commons_api_url: nonempty_env("COMMONS_API_URL")
                 .unwrap_or_else(|| "https://commons.wikimedia.org/w/api.php".into()),
+            commons_api_timeout_seconds: parse_env("COMMONS_API_TIMEOUT_SECONDS", 300_u64)?,
+            commons_bot_password_path,
             wikidata_sparql_url: nonempty_env("WIKIDATA_SPARQL_URL")
                 .unwrap_or_else(|| "https://query.wikidata.org/sparql".into()),
             nearby_radius_meters: parse_env("NEARBY_RADIUS_METERS", 10_000_u32)?,

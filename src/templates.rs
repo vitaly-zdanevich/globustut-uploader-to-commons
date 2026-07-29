@@ -1,5 +1,5 @@
 use crate::db::UploadRecord;
-use crate::media::{DiskSpace, display_basename};
+use crate::media::display_basename;
 use html_escape::{encode_quoted_attribute, encode_text};
 
 #[derive(Clone, Debug)]
@@ -29,37 +29,37 @@ pub fn upload_page(
         <main class='upload-shell'>
           <header class='brand-header'>
             <img src='/static/favicon.svg' width='44' height='44' alt=''>
-            <div><strong>Глобус Беларуси</strong><span>Фотографии для Wikimedia Commons</span></div>
+            <div><strong>Глобус Беларусі</strong><span>Фатаграфіі для Wikimedia Commons</span></div>
           </header>
           <section class='upload-workspace' aria-labelledby='upload-title'>
             <div class='section-heading'>
-              <h1 id='upload-title'>Добавить фотографии/видео</h1>
+              <h1 id='upload-title'>Дадаць фатаграфіі/відэа</h1>
             </div>
             <form class='upload-form' action='/upload' method='post' enctype='multipart/form-data' data-upload-form>
               <label class='file-drop' data-file-drop>
                 <input type='file' name='files' multiple required data-file-input data-max-files='{max_files}' data-max-file-bytes='{max_file_bytes}' data-max-request-bytes='{max_request_bytes}'>
-                <span class='file-drop-title'>Выбрать файлы</span>
-                <span class='file-drop-meta'>До {max_files} файлов, каждый до {max_file_mb} МБ, общий объём до {max_request}</span>
+                <span class='file-drop-title'>Выбраць файлы</span>
+                <span class='file-drop-meta'>Да {max_files} файлаў, кожны да {max_file_mb} МБ, агульны аб'ём да {max_request}</span>
               </label>
               <div class='selected-files' data-selected-files aria-live='polite'></div>
               <p class='file-error' role='alert' data-file-error hidden></p>
               <div class='field category-field'>
-                <label for='upload-category'>Категория Wikimedia Commons</label>
+                <label for='upload-category'>Катэгорыя Wikimedia Commons</label>
                 <input id='upload-category' type='text' name='category' value='{category}' maxlength='255' required autocomplete='off' spellcheck='false' role='combobox' aria-autocomplete='list' aria-haspopup='listbox' aria-controls='upload-category-menu' aria-expanded='false' data-category-input>
                 <div id='upload-category-menu' class='category-menu' role='listbox' data-category-menu hidden></div>
               </div>
-              <p class='license-note'>Загружая сюда ваши фотографии, вы объявляете их лицензию <strong>Creative Commons BY 4.0</strong>. Автор будет указан из метаданных.</p>
+              <p class='license-note'>Запампоўваючы сюды свае фатаграфіі, вы публікуеце іх на ўмовах ліцэнзіі <strong>Creative Commons BY 4.0</strong>. Аўтар будзе пазначаны паводле метаданых.</p>
               <div class='form-actions'>
-                <button class='primary-button' type='submit' data-submit>Отправить на премодерацию</button>
+                <button class='primary-button' type='submit' data-submit>Адправіць на прэмадэрацыю</button>
                 <span class='submit-status' data-submit-status aria-live='polite'></span>
               </div>
             </form>
           </section>
         </main>
-        <footer class='upload-footer'>Спасибо за сохранение культурного наследия</footer>
+        <footer class='upload-footer'>Дзякуй за захаванне культурнай спадчыны</footer>
         "#
     );
-    page("Добавить фотографии/видео", &body, "upload-page")
+    page("Дадаць фатаграфіі/відэа", &body, "upload-page")
 }
 
 pub fn upload_results(results: &[SubmissionResult]) -> String {
@@ -67,9 +67,9 @@ pub fn upload_results(results: &[SubmissionResult]) -> String {
     let mut rows = String::new();
     for result in results {
         let status = if result.accepted {
-            "Принято"
+            "Прынята"
         } else {
-            "Ошибка"
+            "Памылка"
         };
         let class = if result.accepted {
             "accepted"
@@ -77,73 +77,74 @@ pub fn upload_results(results: &[SubmissionResult]) -> String {
             "rejected"
         };
         rows.push_str(&format!(
-            r#"<li class="result-row {class}"><span class="result-status">{status}</span><strong>{}</strong><span>{}</span></li>"#,
+            r#"<li class='result-row {class}'><span class='result-status'>{status}</span><strong>{}</strong><span>{}</span></li>"#,
             text(&result.filename),
             text(&result.detail)
         ));
     }
     let heading = if accepted == 0 {
-        "Файлы не приняты".to_string()
+        "Файлы не прыняты".to_string()
     } else {
-        format!("Принято файлов: {accepted}")
+        format!("Прынята файлаў: {accepted}")
     };
     let body = format!(
         r#"
-        <main class="upload-shell result-shell">
-          <header class="brand-header">
-            <img src="/static/favicon.svg" width="44" height="44" alt="">
-            <div><strong>Глобус Беларуси</strong><span>Фотографии для Wikimedia Commons</span></div>
+        <main class='upload-shell result-shell'>
+          <header class='brand-header'>
+            <img src='/static/favicon.svg' width='44' height='44' alt=''>
+            <div><strong>Глобус Беларусі</strong><span>Фатаграфіі для Wikimedia Commons</span></div>
           </header>
-          <section class="upload-workspace" aria-labelledby="result-title">
-            <div class="section-heading"><p class="eyebrow">Премодерация</p><h1 id="result-title">{}</h1></div>
-            <ul class="result-list">{rows}</ul>
-            <a class="primary-button button-link" href="/">Добавить ещё</a>
+          <section class='upload-workspace' aria-labelledby='result-title'>
+            <div class='section-heading'><p class='eyebrow'>Прэмадэрацыя</p><h1 id='result-title'>{}</h1></div>
+            <ul class='result-list'>{rows}</ul>
+            <a class='primary-button button-link' href='/'>Дадаць яшчэ</a>
           </section>
         </main>
         "#,
         text(&heading)
     );
-    page("Результат загрузки", &body, "upload-page")
+    page("Вынік запампоўвання", &body, "upload-page")
 }
 
 pub fn login_page(error: Option<&str>) -> String {
     let error = error
         .map(|message| {
             format!(
-                r#"<p class="form-error" role="alert">{}</p>"#,
+                r#"<p class='form-error' role='alert'>{}</p>"#,
                 text(message)
             )
         })
         .unwrap_or_default();
     let body = format!(
         r#"
-        <main class="login-shell">
-          <section class="login-panel" aria-labelledby="login-title">
-            <header class="brand-header compact">
-              <img src="/static/favicon.svg" width="40" height="40" alt="">
-              <div><strong>Глобус Беларуси</strong><span>Премодерация</span></div>
+        <main class='login-shell'>
+          <section class='login-panel' aria-labelledby='login-title'>
+            <header class='brand-header compact'>
+              <img src='/static/favicon.svg' width='40' height='40' alt=''>
+              <div><strong>Глобус Беларусі</strong><span>Прэмадэрацыя</span></div>
             </header>
-            <h1 id="login-title">Вход</h1>
+            <h1 id='login-title'>Уваход</h1>
             {error}
-            <form action="/admin/login" method="post" class="login-form">
-              <label class="field"><span>Логин</span><input name="username" autocomplete="username" maxlength="100" required autofocus></label>
-              <label class="field"><span>Пароль</span><input type="password" name="password" autocomplete="current-password" required></label>
-              <button class="primary-button" type="submit">Войти</button>
+            <form action='/admin/login' method='post' class='login-form'>
+              <label class='field'><span>Імя карыстальніка</span><input name='username' autocomplete='username' maxlength='100' required autofocus></label>
+              <label class='field'><span>Пароль</span><input type='password' name='password' autocomplete='current-password' required></label>
+              <button class='primary-button' type='submit'>Увайсці</button>
             </form>
           </section>
         </main>
         "#
     );
-    page("Вход в премодерацию", &body, "admin-page")
+    page("Уваход у прэмадэрацыю", &body, "admin-page")
 }
 
 pub struct AdminPageData<'a> {
     pub username: &'a str,
     pub csrf_token: &'a str,
+    pub commons_account: Option<&'a str>,
     pub uploads: &'a [UploadRecord],
     pub total_count: u64,
     pub stored_bytes: u64,
-    pub disk: &'a DiskSpace,
+    pub storage_limit_bytes: u64,
     pub page_number: usize,
     pub has_next_page: bool,
 }
@@ -155,34 +156,51 @@ pub fn admin_page(data: AdminPageData<'_>) -> String {
     }
     if data.uploads.is_empty() {
         items.push_str(
-            r#"<div class="empty-state"><h2>Очередь пуста</h2><p>Новые фотографии появятся здесь после отправки формы.</p></div>"#,
+            r#"<div class='empty-state'><h2>Чарга пустая</h2><p>Новыя матэрыялы з'явяцца тут пасля адпраўкі формы.</p></div>"#,
         );
     }
-    let used_percent = if data.disk.total_bytes == 0 {
-        0.0
+    let disk_used_mib = mebibytes(data.stored_bytes);
+    let disk_total_mib = mebibytes(data.storage_limit_bytes);
+    let commons_files_link = data
+        .commons_account
+        .map(str::trim)
+        .filter(|account| !account.is_empty())
+        .map(|account| {
+            let account = wiki_path_component(account);
+            format!(
+                r#"<a class='admin-files-link' href='https://commons.wikimedia.org/wiki/Special:ListFiles/{account}' target='_blank' rel='noopener noreferrer'>Запампаваныя файлы</a>"#
+            )
+        })
+        .unwrap_or_default();
+    let mut pending_upload_fields = String::new();
+    for (index, upload) in data.uploads.iter().enumerate() {
+        let name = if index == 0 { " name='upload_id'" } else { "" };
+        pending_upload_fields.push_str(&format!(
+            r#"<input type='hidden'{name} value='{}' data-publish-upload-id data-publish-size-bytes='{}'>"#,
+            attribute(&upload.id),
+            upload.size_bytes,
+        ));
+    }
+    let publish_disabled = if data.uploads.is_empty() {
+        " disabled aria-disabled='true'"
     } else {
-        ((data
-            .disk
-            .total_bytes
-            .saturating_sub(data.disk.available_bytes)) as f64
-            / data.disk.total_bytes as f64)
-            * 100.0
+        ""
     };
     let previous = (data.page_number > 1).then(|| {
         format!(
-            r#"<a class="page-button" href="/admin?page={}">Назад</a>"#,
+            r#"<a class='page-button' href='/admin?page={}'>Назад</a>"#,
             data.page_number - 1
         )
     });
     let next = data.has_next_page.then(|| {
         format!(
-            r#"<a class="page-button" href="/admin?page={}">Далее</a>"#,
+            r#"<a class='page-button' href='/admin?page={}'>Далей</a>"#,
             data.page_number + 1
         )
     });
     let pagination = if previous.is_some() || next.is_some() {
         format!(
-            r#"<nav class="pagination" aria-label="Страницы">{}<span>Страница {}</span>{}</nav>"#,
+            r#"<nav class='pagination' aria-label='Старонкі'>{}<span>Старонка {}</span>{}</nav>"#,
             previous.unwrap_or_default(),
             data.page_number,
             next.unwrap_or_default()
@@ -192,66 +210,104 @@ pub fn admin_page(data: AdminPageData<'_>) -> String {
     };
     let body = format!(
         r#"
-        <header class="admin-header">
-          <a class="admin-brand" href="/admin"><img src="/static/favicon.svg" width="34" height="34" alt=""><span>Глобус Беларуси</span></a>
-          <div class="admin-account"><span>{username}</span><form action="/admin/logout" method="post"><input type="hidden" name="csrf_token" value="{csrf}"><button class="quiet-button" type="submit">Выйти</button></form></div>
+        <header class='admin-header'>
+          <div class='admin-header-primary'>
+            <a class='admin-brand' href='/admin'><img src='/static/favicon.svg' width='34' height='34' alt=''><span>Глобус Беларусі</span></a>
+            {commons_files_link}
+          </div>
+          <div class='admin-account'><span>{username}</span><form action='/admin/logout' method='post'><input type='hidden' name='csrf_token' value='{csrf}'><button class='quiet-button' type='submit'>Выйсці</button></form></div>
         </header>
-        <main class="admin-main">
-          <div class="queue-heading">
-            <div><p class="eyebrow">Премодерация</p><h1>Новые материалы</h1></div>
-            <dl class="queue-stats">
-              <div><dt>В очереди</dt><dd>{total_count}</dd></div>
-              <div><dt>Файлы</dt><dd>{stored_size}</dd></div>
-              <div><dt>Диск</dt><dd>{used_percent:.0}%</dd></div>
+        <main class='admin-main'>
+          <div class='queue-heading'>
+            <dl class='queue-stats' data-queue-stats data-total-count='{total_count}' data-stored-bytes='{stored_bytes}' data-storage-limit-bytes='{storage_limit_bytes}'>
+              <div><dt>У чарзе</dt><dd data-queue-count>{total_count}</dd></div>
+              <div><dt>Файлы</dt><dd data-queue-files>{stored_size}</dd></div>
+              <div><dt>Дыск</dt><dd data-queue-disk>{disk_used_mib} МБ / {disk_total_mib} МБ</dd></div>
             </dl>
           </div>
-          <div class="moderation-list">{items}</div>
-          {pagination}
+          <div class='moderation-list'>{items}</div>
+          <div data-pagination-slot>{pagination}</div>
+          <section class='commons-publish' aria-label='Публікацыя ў Wikimedia Commons'>
+            <form class='commons-publish-form' action='/admin/publish' method='post' data-publish-form>
+              <input type='hidden' name='csrf_token' value='{csrf}'>
+              {pending_upload_fields}
+              <button class='primary-button commons-publish-button' type='submit' data-publish-submit{publish_disabled}>
+                <span>Запампаваць у Wikimedia Commons</span>
+                <span class='publish-spinner' data-publish-spinner aria-hidden='true' hidden></span>
+              </button>
+              <p class='publish-status' role='status' aria-live='polite' data-publish-status></p>
+            </form>
+            <div class='publish-results' data-publish-results></div>
+          </section>
         </main>
         "#,
         username = text(data.username),
         csrf = attribute(data.csrf_token),
+        commons_files_link = commons_files_link,
+        pending_upload_fields = pending_upload_fields,
+        publish_disabled = publish_disabled,
         total_count = data.total_count,
+        stored_bytes = data.stored_bytes,
+        storage_limit_bytes = data.storage_limit_bytes,
         stored_size = format_size(data.stored_bytes),
     );
-    page("Премодерация", &body, "admin-page")
+    page("Прэмадэрацыя", &body, "admin-page")
 }
 
 pub fn error_page(status: u16, message: &str) -> String {
     let body = format!(
-        r#"<main class="error-shell"><span class="error-code">{status}</span><h1>Не удалось выполнить запрос</h1><p>{}</p><a href="/" class="primary-button button-link">На главную</a></main>"#,
+        r#"<main class='error-shell'><span class='error-code'>{status}</span><h1>Не ўдалося выканаць запыт</h1><p>{}</p><a href='/' class='primary-button button-link'>На галоўную</a></main>"#,
         text(message)
     );
-    page("Ошибка", &body, "error-page")
+    page("Памылка", &body, "error-page")
 }
 
 fn moderation_item(upload: &UploadRecord, csrf_token: &str) -> String {
     let id = attribute(&upload.id);
     let media = if upload.media_kind == "video" {
-        format!(r#"<video controls preload="metadata" src="/admin/media/{id}"></video>"#)
+        format!(r#"<video controls preload='metadata' src='/admin/media/{id}'></video>"#)
     } else {
         format!(
-            r#"<a href="/admin/media/{id}" target="_blank" rel="noopener"><img src="/admin/thumbnail/{id}" alt="{}" loading="lazy"></a>"#,
+            r#"<a href='/admin/media/{id}' target='_blank' rel='noopener'><img src='/admin/thumbnail/{id}' alt='{}' loading='lazy'></a>"#,
             attribute(&upload.display_filename)
         )
     };
-    let coordinates = match (upload.latitude, upload.longitude) {
+    let location_meta = match (upload.latitude, upload.longitude) {
         (Some(latitude), Some(longitude)) => {
             let osm = format!(
                 "https://www.openstreetmap.org/?mlat={latitude:.6}&mlon={longitude:.6}#map=15/{latitude:.6}/{longitude:.6}"
             );
             format!(
-                r#"<a class="location-link" href="{}" target="_blank" rel="noopener noreferrer">OpenStreetMap · {latitude:.6}, {longitude:.6}</a>"#,
-                attribute(&osm)
+                r#"<div><dt>Месца</dt><dd><a class='location-link' href='{}' target='_blank' rel='noopener noreferrer' aria-label='Адкрыць каардынаты {latitude:.6}, {longitude:.6} у OpenStreetMap'>{latitude:.6}, {longitude:.6}</a></dd></div>"#,
+                attribute(&osm),
             )
         }
-        _ => r#"<span class="muted">Координат EXIF нет</span>"#.into(),
+        _ => String::new(),
     };
-    let category_url = format!(
-        "https://commons.wikimedia.org/wiki/Category:{}",
-        url::form_urlencoded::byte_serialize(upload.commons_category.replace(' ', "_").as_bytes())
-            .collect::<String>()
-    );
+    let mut category_chips = String::new();
+    for category in &upload.commons_categories {
+        let category_text = text(category);
+        let category_value = attribute(category);
+        let category_url = attribute(&commons_category_url(category));
+        let open_label = attribute(&format!("Адкрыць катэгорыю {category} у Wikimedia Commons"));
+        let remove_label = attribute(&format!("Выдаліць катэгорыю {category}"));
+        category_chips.push_str(&format!(
+            r#"
+            <li class='category-chip' data-category-chip data-category-value='{category_value}'>
+              <span class='category-chip-label'>{category_text}</span>
+              <div class='category-chip-actions'>
+                <a class='category-chip-link' href='{category_url}' target='_blank' rel='noopener noreferrer' title='{open_label}' aria-label='{open_label}'><span aria-hidden='true'>🔗</span></a>
+                <form class='category-chip-remove-form' action='/admin/uploads/{id}/categories/remove' method='post' data-category-remove-form>
+                  <input type='hidden' name='csrf_token' value='{csrf}'>
+                  <input type='hidden' name='category' value='{category_value}'>
+                  <button class='category-chip-remove' type='submit' title='{remove_label}' aria-label='{remove_label}' data-category-remove>×</button>
+                </form>
+              </div>
+            </li>
+            "#,
+            csrf = attribute(csrf_token),
+        ));
+    }
     let extension = upload
         .display_filename
         .rsplit_once('.')
@@ -259,7 +315,7 @@ fn moderation_item(upload: &UploadRecord, csrf_token: &str) -> String {
         .unwrap_or("");
     let conversion = if upload.converted {
         format!(
-            "Конвертирован · {} → {}",
+            "Пераўтворана · {} → {}",
             format_size(upload.original_size_bytes),
             format_size(upload.size_bytes)
         )
@@ -270,74 +326,71 @@ fn moderation_item(upload: &UploadRecord, csrf_token: &str) -> String {
         (Some(width), Some(height)) => format!("{width}×{height}"),
         _ => "—".into(),
     };
-    let date = upload
-        .capture_date
-        .as_deref()
-        .unwrap_or("Дата EXIF не указана");
-    let author = upload
+    let author_meta = upload
         .author
         .as_deref()
-        .unwrap_or("Автор в метаданных не указан");
+        .map(|author| format!(r#"<div><dt>Аўтар</dt><dd>{}</dd></div>"#, text(author)))
+        .unwrap_or_default();
     let uploaded_at = format_timestamp(upload.created_at);
     let (nearby_attribute, nearby_initial) = if upload.has_coordinates() {
         (
-            format!(r#" data-nearby-url="/api/uploads/{id}/nearby-categories""#),
-            r#"<span class="muted">Ближайшие категории загружаются…</span>"#,
+            format!(r#" data-nearby-url='/api/uploads/{id}/nearby-categories'"#),
+            r#"<span class='muted'>Найбліжэйшыя катэгорыі запампоўваюцца…</span>"#,
         )
     } else {
         (
             String::new(),
-            r#"<span class="muted">Для поиска ближайших категорий нужны координаты EXIF.</span>"#,
+            r#"<span class='muted'>Для пошуку найбліжэйшых катэгорый патрэбныя каардынаты EXIF.</span>"#,
         )
     };
     let category_input_id = format!("category-{id}");
     let category_menu_id = format!("category-menu-{id}");
+    let category_label_id = format!("category-label-{id}");
+    let category_status_id = format!("category-status-{id}");
     format!(
         r#"
-        <article class="moderation-item" id="upload-{id}" data-upload-id="{id}">
-          <div class="media-stage">{media}</div>
-          <div class="moderation-fields">
-            <div class="item-topline"><span>{kind}</span><span>{uploaded_at}</span></div>
-            <form class="inline-form filename-form" action="/admin/uploads/{id}/rename" method="post">
-              <input type="hidden" name="csrf_token" value="{csrf}">
-              <label><span>Имя файла</span><span class="filename-input"><input name="basename" value="{basename}" maxlength="180" required><span>.{extension}</span></span></label>
-              <button class="secondary-button" type="submit">Сохранить имя</button>
+        <article class='moderation-item' id='upload-{id}' data-upload-id='{id}'>
+          <div class='media-stage'>{media}</div>
+          <div class='moderation-fields'>
+            <div class='item-topline'><span>{uploaded_at}</span></div>
+            <form class='inline-form filename-form' action='/admin/uploads/{id}/rename' method='post'>
+              <input type='hidden' name='csrf_token' value='{csrf}'>
+              <label aria-label='Імя файла'><span class='filename-input'><input name='basename' value='{basename}' maxlength='180' required aria-label='Імя файла без пашырэння'><span>.{extension}</span></span></label>
+              <button class='secondary-button' type='submit'>Захаваць імя</button>
             </form>
-            <form class="inline-form category-form" action="/admin/uploads/{id}/category" method="post">
-              <input type="hidden" name="csrf_token" value="{csrf}">
-              <div class="field category-field"><label for="{category_input_id}">Категория Commons</label><input id="{category_input_id}" name="category" value="{category}" maxlength="255" autocomplete="off" spellcheck="false" required role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="{category_menu_id}" aria-expanded="false" data-category-input><div id="{category_menu_id}" class="category-menu" role="listbox" data-category-menu hidden></div></div>
-              <button class="secondary-button" type="submit">Сохранить категорию</button>
-            </form>
-            <div class="category-context"><a href="{category_url}" target="_blank" rel="noopener">Открыть текущую категорию</a><div class="nearby-categories"{nearby_attribute}>{nearby_initial}</div></div>
-            <dl class="file-meta">
-              <div><dt>Размер</dt><dd>{dimensions} · {conversion}</dd></div>
-              <div><dt>Съёмка</dt><dd>{date}</dd></div>
-              <div><dt>Автор</dt><dd>{author}</dd></div>
-              <div><dt>Место</dt><dd>{coordinates}</dd></div>
-              <div><dt>Лицензия</dt><dd>{license}</dd></div>
-              <div><dt>Исходное имя</dt><dd title="{original_title}">{original}</dd></div>
+            <section class='category-editor' aria-labelledby='{category_label_id}' data-category-editor>
+              <h2 class='category-editor-label' id='{category_label_id}'>Катэгорыі Commons</h2>
+              <ul class='category-chip-list' data-category-list>{category_chips}</ul>
+              <form class='category-add-form' action='/admin/uploads/{id}/categories' method='post' data-category-add-form>
+                <input type='hidden' name='csrf_token' value='{csrf}'>
+                <div class='field category-field'>
+                  <label class='visually-hidden' for='{category_input_id}'>Дадаць катэгорыю Wikimedia Commons</label>
+                  <input id='{category_input_id}' name='category' value='' maxlength='255' autocomplete='off' spellcheck='false' placeholder='Дадаць катэгорыю' role='combobox' aria-autocomplete='list' aria-haspopup='listbox' aria-controls='{category_menu_id}' aria-describedby='{category_status_id}' aria-expanded='false' data-category-input>
+                  <div id='{category_menu_id}' class='category-menu' role='listbox' data-category-menu hidden></div>
+                </div>
+              </form>
+              <p class='category-status' id='{category_status_id}' role='status' aria-live='polite' data-category-status></p>
+            </section>
+            <div class='category-context'><span class='category-context-label'>Найбліжэйшыя катэгорыі</span><div class='nearby-categories'{nearby_attribute}>{nearby_initial}</div></div>
+            <dl class='file-meta'>
+              <div><dt>Памер</dt><dd>{dimensions} · {conversion}</dd></div>
+              {author_meta}
+              {location_meta}
+              <div><dt>Зыходнае імя</dt><dd title='{original_title}'>{original}</dd></div>
             </dl>
-            <form class="delete-form" action="/admin/uploads/{id}/delete" method="post" data-delete-form>
-              <input type="hidden" name="csrf_token" value="{csrf}">
-              <button class="delete-button" type="submit" title="Удалить файл" aria-label="Удалить файл">×</button>
+            <form class='delete-form' action='/admin/uploads/{id}/delete' method='post' data-delete-form>
+              <input type='hidden' name='csrf_token' value='{csrf}'>
+              <button class='delete-button' type='submit' title='Выдаліць файл' aria-label='Выдаліць файл'>×</button>
             </form>
           </div>
         </article>
         "#,
-        kind = if upload.media_kind == "video" {
-            "Видео"
-        } else {
-            "Фото"
-        },
         csrf = attribute(csrf_token),
         basename = attribute(display_basename(&upload.display_filename)),
         extension = text(extension),
-        category = attribute(&upload.commons_category),
-        category_url = attribute(&category_url),
-        date = text(date),
-        author = text(author),
-        coordinates = coordinates,
-        license = text(license_label(&upload.license)),
+        category_chips = category_chips,
+        author_meta = author_meta,
+        location_meta = location_meta,
         original = text(&truncate(&upload.original_filename, 70)),
         original_title = attribute(&upload.original_filename),
     )
@@ -346,17 +399,17 @@ fn moderation_item(upload: &UploadRecord, csrf_token: &str) -> String {
 fn page(title: &str, body: &str, body_class: &str) -> String {
     format!(
         r#"<!doctype html>
-<html lang="ru">
+<html lang='be'>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width,initial-scale=1'>
+  <meta name='color-scheme' content='light dark'>
   <title>{title}</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/app.js" defer></script>
+  <link rel='icon' href='/static/favicon.svg' type='image/svg+xml'>
+  <link rel='stylesheet' href='/static/app.css'>
+  <script src='/static/app.js' defer></script>
 </head>
-<body class="{body_class}">{body}</body>
+<body class='{body_class}'>{body}</body>
 </html>"#,
         title = text(title),
         body_class = attribute(body_class)
@@ -369,6 +422,25 @@ fn text(value: &str) -> String {
 
 fn attribute(value: &str) -> String {
     encode_quoted_attribute(value).into_owned()
+}
+
+fn wiki_path_component(value: &str) -> String {
+    let mut url = url::Url::parse("https://example.invalid/").expect("fixed URL must be valid");
+    url.path_segments_mut()
+        .expect("fixed URL must support path segments")
+        .push(value);
+    url.path().trim_start_matches('/').to_string()
+}
+
+fn commons_category_url(category: &str) -> String {
+    format!(
+        "https://commons.wikimedia.org/wiki/Category:{}",
+        wiki_path_component(&category.replace(' ', "_"))
+    )
+}
+
+fn mebibytes(bytes: u64) -> u64 {
+    bytes / (1024 * 1024)
 }
 
 fn format_size(bytes: u64) -> String {
@@ -397,15 +469,6 @@ fn format_timestamp(timestamp: i64) -> String {
         .unwrap_or_else(|_| "—".into())
 }
 
-fn license_label(value: &str) -> &str {
-    match value {
-        "cc-by-sa-4.0" => "CC BY-SA 4.0",
-        "cc-by-4.0" => "CC BY 4.0",
-        "cc0" => "CC0",
-        _ => value,
-    }
-}
-
 fn truncate(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -420,7 +483,10 @@ fn truncate(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{SubmissionResult, login_page, upload_page, upload_results};
+    use super::{
+        AdminPageData, SubmissionResult, admin_page, login_page, upload_page, upload_results,
+    };
+    use crate::db::UploadRecord;
 
     #[test]
     fn escapes_dynamic_template_content() {
@@ -441,11 +507,90 @@ mod tests {
         let html = upload_page("Castles_in_Belarus", 500, 200, 2048);
 
         assert!(html.contains("value='Castles_in_Belarus'"));
-        assert!(html.contains("До 500 файлов, каждый до 200 МБ, общий объём до 2 ГБ"));
+        assert!(html.contains("Да 500 файлаў, кожны да 200 МБ, агульны аб'ём да 2 ГБ"));
         assert!(html.contains("Creative Commons BY 4.0"));
-        assert!(html.contains("Автор будет указан из метаданных."));
-        assert!(html.contains("Добавить фотографии/видео"));
-        assert!(html.contains("Спасибо за сохранение культурного наследия"));
+        assert!(html.contains("Аўтар будзе пазначаны паводле метаданых."));
+        assert!(html.contains("Дадаць фатаграфіі/відэа"));
+        assert!(html.contains("Дзякуй за захаванне культурнай спадчыны"));
         assert!(!html.contains("Новая публикация"));
+        assert!(!html.contains("class=\""));
+    }
+
+    #[test]
+    fn renders_moderation_categories_and_publish_controls() {
+        let upload = UploadRecord {
+            id: "upload-one".into(),
+            stored_filename: "stored.jpg".into(),
+            original_filename: "original.jpg".into(),
+            display_filename: "Photo.jpg".into(),
+            mime_type: "image/jpeg".into(),
+            media_kind: "image".into(),
+            size_bytes: 1024,
+            original_size_bytes: 1024,
+            converted: false,
+            width: Some(640),
+            height: Some(480),
+            latitude: Some(53.9045),
+            longitude: Some(27.5615),
+            capture_date: Some("2025-07-18".into()),
+            author: None,
+            commons_categories: vec!["Castles in Belarus".into(), "Minsk".into()],
+            license: "cc-by-4.0".into(),
+            uploader_username: "anonymous".into(),
+            created_at: 1,
+        };
+        let mebibyte = 1024 * 1024;
+        let html = admin_page(AdminPageData {
+            username: "moderator",
+            csrf_token: "csrf",
+            commons_account: Some("Test Photographer"),
+            uploads: &[upload],
+            total_count: 1,
+            stored_bytes: 100 * mebibyte,
+            storage_limit_bytes: 2500 * mebibyte,
+            page_number: 1,
+            has_next_page: false,
+        });
+
+        assert_eq!(
+            html.matches("data-category-chip data-category-value")
+                .count(),
+            2
+        );
+        assert!(html.contains("Category:Castles_in_Belarus"));
+        assert!(html.contains("data-category-remove-form"));
+        assert!(html.contains("data-category-add-form"));
+        assert!(!html.contains("Сохранить категорию"));
+        assert!(!html.contains("Открыть текущую категорию"));
+        assert!(html.contains("Найбліжэйшыя катэгорыі"));
+        assert!(html.contains(">53.904500, 27.561500</a>"));
+        assert!(!html.contains("<dt>Аўтар</dt>"));
+        assert!(!html.contains("<h1 class='queue-title'>"));
+        assert!(!html.contains("<span class='visually-hidden'>Імя файла</span>"));
+        assert!(!html.contains("Съёмка"));
+        assert!(!html.contains("Лицензия"));
+        assert!(html.contains("100 МБ / 2500 МБ"));
+        assert!(html.contains("Special:ListFiles/Test%20Photographer"));
+        assert!(html.contains("name='upload_id' value='upload-one'"));
+        assert!(html.contains("data-publish-size-bytes='1024'"));
+        assert!(html.contains("data-publish-spinner"));
+        assert!(html.contains("data-publish-results"));
+        assert!(html.contains("Запампаваць у Wikimedia Commons"));
+        assert!(!html.contains("Новые материалы"));
+        assert!(!html.contains("class=\""));
+
+        let empty_html = admin_page(AdminPageData {
+            username: "moderator",
+            csrf_token: "csrf",
+            commons_account: None,
+            uploads: &[],
+            total_count: 0,
+            stored_bytes: 0,
+            storage_limit_bytes: 2500 * mebibyte,
+            page_number: 1,
+            has_next_page: false,
+        });
+        assert!(!empty_html.contains("admin-files-link"));
+        assert!(empty_html.contains("data-publish-submit disabled"));
     }
 }

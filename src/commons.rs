@@ -11,6 +11,7 @@ use url::Url;
 
 const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_CACHE_ENTRIES: usize = 256;
+pub const MAX_CATEGORIES_PER_UPLOAD: usize = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Coordinates {
@@ -189,7 +190,7 @@ impl CommonsClient {
 		bd:serviceParam wikibase:distance ?distance .
 	}}
 	?item wdt:P373 ?commonsCategory .
-	SERVICE wikibase:label {{ bd:serviceParam wikibase:language "ru,be,en,uk,pl,de,fr,mul" . }}
+	SERVICE wikibase:label {{ bd:serviceParam wikibase:language "be,ru,en,uk,pl,de,fr,mul" . }}
 }}
 ORDER BY ASC(?distance)
 LIMIT {item_limit}"#
@@ -226,6 +227,25 @@ pub fn validate_category(raw: &str) -> Result<String> {
         bail!("a valid Wikimedia Commons category is required");
     }
     Ok(category)
+}
+
+pub fn validate_categories<S: AsRef<str>>(raw_categories: &[S]) -> Result<Vec<String>> {
+    if raw_categories.is_empty() {
+        bail!("at least one Wikimedia Commons category is required");
+    }
+    if raw_categories.len() > MAX_CATEGORIES_PER_UPLOAD {
+        bail!("no more than {MAX_CATEGORIES_PER_UPLOAD} Wikimedia Commons categories are allowed");
+    }
+
+    let mut categories = Vec::with_capacity(raw_categories.len());
+    let mut seen = HashSet::with_capacity(raw_categories.len());
+    for raw_category in raw_categories {
+        let category = validate_category(raw_category.as_ref())?;
+        if seen.insert(category.clone()) {
+            categories.push(category);
+        }
+    }
+    Ok(categories)
 }
 
 async fn cache_get<T: Clone>(
@@ -377,7 +397,8 @@ fn optional_distance_order(left: Option<f64>, right: Option<f64>) -> std::cmp::O
 #[cfg(test)]
 mod tests {
     use super::{
-        CommonsClient, Coordinates, SparqlResponse, normalize_category, validate_category,
+        CommonsClient, Coordinates, MAX_CATEGORIES_PER_UPLOAD, SparqlResponse, normalize_category,
+        validate_categories, validate_category,
     };
 
     #[test]
@@ -409,6 +430,23 @@ mod tests {
     }
 
     #[test]
+    fn validates_normalizes_and_deduplicates_category_lists() {
+        assert_eq!(
+            validate_categories(&[
+                "Category:Castles_in_Belarus",
+                "Minsk",
+                "Castles in Belarus",
+                "minsk",
+            ])
+            .unwrap(),
+            ["Castles in Belarus", "Minsk", "minsk"]
+        );
+        assert!(validate_categories::<&str>(&[]).is_err());
+        assert!(validate_categories(&["Minsk", "Bad[title]"]).is_err());
+        assert!(validate_categories(&vec!["Minsk"; MAX_CATEGORIES_PER_UPLOAD + 1]).is_err());
+    }
+
+    #[test]
     fn query_uses_longitude_then_latitude_and_p373() {
         let client = CommonsClient::new(
             "test",
@@ -421,6 +459,7 @@ mod tests {
         let query = client.wikidata_query(Coordinates::new(53.9, 27.5667).unwrap());
         assert!(query.contains("Point(27.5667 53.9)"));
         assert!(query.contains("?item wdt:P373 ?commonsCategory"));
+        assert!(query.contains(r#"wikibase:language "be,ru,en,uk,pl,de,fr,mul""#));
         assert!(query.contains("wikibase:radius \"10\""));
         assert!(query.contains("LIMIT 80"));
     }

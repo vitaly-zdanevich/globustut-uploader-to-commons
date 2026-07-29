@@ -4,6 +4,7 @@ set -euo pipefail
 # Run on a Toolforge bastion after: become YOUR_TOOL
 REPO="${REPO:-https://github.com/vitaly-zdanevich/globustut-uploader-to-commons}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMMIT_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 
 if ! command -v toolforge >/dev/null 2>&1; then
   echo "The toolforge CLI is required; run this script on a Toolforge bastion." >&2
@@ -27,8 +28,8 @@ install -d -m 700 \
 echo "==> Installing service.template"
 cp "$ROOT_DIR/toolforge/service.template" "$HOME/service.template"
 
-echo "==> Building from $REPO"
-toolforge build start "$REPO"
+echo "==> Building $REPO at $COMMIT_SHA"
+toolforge build start --ref "$COMMIT_SHA" "$REPO"
 
 echo "==> Starting or refreshing the webservice"
 if toolforge webservice status >/dev/null 2>&1; then

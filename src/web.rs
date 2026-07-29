@@ -1,8 +1,9 @@
 use crate::auth::{AuthService, AuthenticatedAdmin};
-use crate::commons::{CommonsClient, Coordinates, validate_category};
+use crate::commons::{CommonsClient, Coordinates, validate_categories, validate_category};
 use crate::config::Config;
 use crate::db::{Database, UploadRecord};
 use crate::media::{MediaProcessor, renamed_display_filename, write_multipart_file};
+use crate::publisher::{COMMONS_ACCOUNT, CommonsPublisher};
 use crate::templates::{self, SubmissionResult};
 use anyhow::{Context, Result};
 use axum::body::Body;
@@ -17,8 +18,9 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio_util::io::ReaderStream;
@@ -39,7 +41,9 @@ pub struct AppState {
     pub auth: AuthService,
     pub media: MediaProcessor,
     pub commons: CommonsClient,
+    pub publisher: Option<CommonsPublisher>,
     upload_slots: Arc<Semaphore>,
+    upload_operations: Arc<StdMutex<HashSet<String>>>,
 }
 
 impl AppState {
@@ -53,14 +57,46 @@ impl AppState {
             config.nearby_radius_meters,
             config.nearby_limit,
         )?;
+        let publisher = CommonsPublisher::from_config(&config)?;
         Ok(Self {
             config,
             db,
             auth,
             media,
             commons,
+            publisher,
             upload_slots: Arc::new(Semaphore::new(1)),
+            upload_operations: Arc::new(StdMutex::new(HashSet::new())),
         })
+    }
+
+    fn claim_upload(&self, id: &str) -> Result<UploadOperationGuard, AppError> {
+        let mut operations = self
+            .upload_operations
+            .lock()
+            .map_err(|_| AppError::internal("upload operation lock is poisoned"))?;
+        if !operations.insert(id.to_string()) {
+            return Err(AppError::locked(
+                "З гэтым файлам ужо выконваецца іншая аперацыя.",
+            ));
+        }
+        Ok(UploadOperationGuard {
+            id: id.to_string(),
+            operations: self.upload_operations.clone(),
+        })
+    }
+}
+
+struct UploadOperationGuard {
+    id: String,
+    operations: Arc<StdMutex<HashSet<String>>>,
+}
+
+impl Drop for UploadOperationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut operations) = self.operations.lock() {
+            operations.remove(&self.id);
+        }
     }
 }
 
@@ -83,7 +119,13 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/media/{id}", get(admin_media))
         .route("/admin/thumbnail/{id}", get(admin_thumbnail))
         .route("/admin/uploads/{id}/rename", post(admin_rename))
-        .route("/admin/uploads/{id}/category", post(admin_category))
+        .route("/admin/uploads/{id}/categories", post(admin_category_add))
+        .route(
+            "/admin/uploads/{id}/categories/remove",
+            post(admin_category_remove),
+        )
+        .route("/admin/uploads/{id}/category", post(admin_category_replace))
+        .route("/admin/publish", post(admin_publish))
         .route("/admin/uploads/{id}/delete", post(admin_delete))
         .route("/api/categories", get(category_search))
         .route(
@@ -149,22 +191,21 @@ async fn upload(
         .upload_slots
         .acquire()
         .await
-        .map_err(|_| AppError::service_unavailable("Сервис загрузки останавливается."))?;
+        .map_err(|_| AppError::service_unavailable("Сэрвіс запампоўвання спыняецца."))?;
     let mut pending = Vec::new();
     let mut cleanup = TemporaryFiles(Vec::new());
     let mut category = None;
     let mut total_file_bytes = 0_u64;
 
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|error| AppError::bad_request(format!("Некорректная форма: {error}")))?
-    {
+    while let Some(mut field) = multipart.next_field().await.map_err(|error| {
+        tracing::warn!(error = %error, "invalid multipart form");
+        AppError::bad_request("Некарэктная форма.")
+    })? {
         match field.name().unwrap_or_default() {
             "files" => {
                 if pending.len() >= state.config.max_files {
                     return Err(AppError::bad_request(format!(
-                        "Можно отправить не более {} файлов за один раз.",
+                        "За адзін раз можна адправіць не больш за {} файлаў.",
                         state.config.max_files
                     )));
                 }
@@ -180,14 +221,24 @@ async fn upload(
                 let written = write_multipart_file(&mut field, &path, state.config.max_file_bytes)
                     .await
                     .map_err(|error| {
-                        AppError::bad_request(format!("{}: {error}", safe_name(&filename)))
+                        let filename = safe_name(&filename);
+                        tracing::warn!(filename = %filename, error = %format!("{error:#}"), "failed to buffer multipart file");
+                        if error.to_string().contains("exceeds the configured size limit") {
+                            AppError::bad_request(format!(
+                                "Файл «{filename}» перавышае дапушчальны памер."
+                            ))
+                        } else {
+                            AppError::bad_request(format!(
+                                "Не ўдалося прыняць файл «{filename}»."
+                            ))
+                        }
                     })?;
                 total_file_bytes = total_file_bytes
                     .checked_add(written)
-                    .ok_or_else(|| AppError::bad_request("Общий размер файлов слишком велик."))?;
+                    .ok_or_else(|| AppError::bad_request("Агульны памер файлаў занадта вялікі."))?;
                 if total_file_bytes > state.config.max_request_bytes as u64 {
                     return Err(AppError::bad_request(format!(
-                        "Общий размер файлов не должен превышать {} МБ.",
+                        "Агульны памер файлаў не павінен перавышаць {} МБ.",
                         state.config.max_request_bytes / (1024 * 1024)
                     )));
                 }
@@ -201,18 +252,19 @@ async fn upload(
             "license" | "rights_confirmed" => {
                 let _ = read_small_field(&mut field).await?;
             }
-            _ => return Err(AppError::bad_request("Форма содержит неизвестное поле.")),
+            _ => return Err(AppError::bad_request("Форма змяшчае невядомае поле.")),
         }
     }
     if pending.is_empty() {
-        return Err(AppError::bad_request("Выберите хотя бы один файл."));
+        return Err(AppError::bad_request("Выберыце хаця б адзін файл."));
     }
     let category = category.unwrap_or_default();
+    let categories = [category];
     let mut results = Vec::with_capacity(pending.len());
     for file in pending {
         let result = state
             .media
-            .ingest(&file.path, &file.filename, &category)
+            .ingest(&file.path, &file.filename, &categories)
             .await;
         tokio::fs::remove_file(&file.path).await.ok();
         match result {
@@ -220,9 +272,9 @@ async fn upload(
                 filename: record.display_filename,
                 accepted: true,
                 detail: if record.converted {
-                    "Формат преобразован; файл ожидает проверки.".into()
+                    "Фармат пераўтвораны; файл чакае праверкі.".into()
                 } else {
-                    "Файл ожидает проверки.".into()
+                    "Файл чакае праверкі.".into()
                 },
             }),
             Err(error) => {
@@ -246,14 +298,14 @@ async fn read_small_field(
     while let Some(chunk) = field
         .chunk()
         .await
-        .map_err(|_| AppError::bad_request("Не удалось прочитать поле формы."))?
+        .map_err(|_| AppError::bad_request("Не ўдалося прачытаць поле формы."))?
     {
         if value.len().saturating_add(chunk.len()) > MAX_SMALL_FIELD_BYTES {
-            return Err(AppError::bad_request("Поле формы слишком длинное."));
+            return Err(AppError::bad_request("Поле формы занадта доўгае."));
         }
         value.extend_from_slice(&chunk);
     }
-    String::from_utf8(value).map_err(|_| AppError::bad_request("Поле формы должно быть UTF-8."))
+    String::from_utf8(value).map_err(|_| AppError::bad_request("Поле формы павінна быць у UTF-8."))
 }
 
 async fn admin_login_page(
@@ -290,7 +342,7 @@ async fn admin_login(
         Err(error) => {
             tracing::warn!(username = %safe_name(&form.username), error = %error, "moderator login failed");
             let mut response = no_store_html(templates::login_page(Some(
-                "Неверный логин или пароль либо вход временно ограничен.",
+                "Няправільнае імя карыстальніка або пароль, альбо ўваход часова абмежаваны.",
             )));
             *response.status_mut() = StatusCode::UNAUTHORIZED;
             Ok(response)
@@ -312,7 +364,7 @@ async fn admin_logout(
         .auth
         .logout(&headers, &form.csrf_token)
         .await
-        .map_err(|_| AppError::forbidden("Недействительный запрос выхода."))?;
+        .map_err(|_| AppError::forbidden("Несапраўдны запыт на выхад."))?;
     let mut response = Redirect::to("/admin/login").into_response();
     response.headers_mut().insert(
         SET_COOKIE,
@@ -341,14 +393,14 @@ async fn admin_page(
     let has_next = uploads.len() > ADMIN_PAGE_SIZE;
     uploads.truncate(ADMIN_PAGE_SIZE);
     let (count, bytes) = state.db.upload_totals().await?;
-    let disk = state.media.disk_space().await?;
     let html = templates::admin_page(templates::AdminPageData {
         username: &admin.username,
         csrf_token: &admin.csrf_token,
+        commons_account: Some(COMMONS_ACCOUNT),
         uploads: &uploads,
         total_count: count,
         stored_bytes: bytes,
-        disk: &disk,
+        storage_limit_bytes: state.config.max_pending_bytes,
         page_number: page,
         has_next_page: has_next,
     });
@@ -369,10 +421,17 @@ async fn admin_rename(
 ) -> Result<Response, AppError> {
     let admin = require_admin(&state, &headers).await?;
     AuthService::validate_csrf(&admin, &form.csrf_token)
-        .map_err(|_| AppError::forbidden("Недействительный запрос."))?;
+        .map_err(|_| AppError::forbidden("Несапраўдны запыт."))?;
+    let _operation = state.claim_upload(&id)?;
     let upload = required_upload(&state.db, &id).await?;
-    let filename = renamed_display_filename(&form.basename, &upload.display_filename)
-        .map_err(|error| AppError::bad_request(error.to_string()))?;
+    let filename =
+        renamed_display_filename(&form.basename, &upload.display_filename).map_err(|error| {
+            if error.to_string().contains("filename must not be empty") {
+                AppError::bad_request("Імя файла не можа быць пустым.")
+            } else {
+                AppError::internal(format!("failed to rename upload {}: {error:#}", upload.id))
+            }
+        })?;
     state.db.update_display_filename(&id, &filename).await?;
     tracing::info!(admin = %admin.username, upload_id = %id, filename = %filename, "moderator renamed upload");
     Ok(redirect_to_upload(&id))
@@ -384,7 +443,12 @@ struct CategoryForm {
     category: String,
 }
 
-async fn admin_category(
+#[derive(Debug, Serialize)]
+struct CategoryUpdateResponse {
+    categories: Vec<String>,
+}
+
+async fn admin_category_add(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -392,13 +456,171 @@ async fn admin_category(
 ) -> Result<Response, AppError> {
     let admin = require_admin(&state, &headers).await?;
     AuthService::validate_csrf(&admin, &form.csrf_token)
-        .map_err(|_| AppError::forbidden("Недействительный запрос."))?;
+        .map_err(|_| AppError::forbidden("Несапраўдны запыт."))?;
+    let _operation = state.claim_upload(&id)?;
+    let category = validate_category(&form.category)
+        .map_err(|_| AppError::bad_request("Некарэктная катэгорыя Commons."))?;
+    let mut categories = required_upload(&state.db, &id).await?.commons_categories;
+    if !categories.iter().any(|existing| existing == &category) {
+        categories.push(category.clone());
+        categories = validate_categories(&categories)
+            .map_err(|_| AppError::bad_request("Некарэктны спіс катэгорый Commons."))?;
+        state.db.replace_categories(&id, &categories).await?;
+        tracing::info!(admin = %admin.username, upload_id = %id, category = %category, "moderator added category");
+    }
+    category_update_response(&headers, &id, categories)
+}
+
+async fn admin_category_remove(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<CategoryForm>,
+) -> Result<Response, AppError> {
+    let admin = require_admin(&state, &headers).await?;
+    AuthService::validate_csrf(&admin, &form.csrf_token)
+        .map_err(|_| AppError::forbidden("Несапраўдны запыт."))?;
+    let _operation = state.claim_upload(&id)?;
+    let category = validate_category(&form.category)
+        .map_err(|_| AppError::bad_request("Некарэктная катэгорыя Commons."))?;
+    let mut categories = required_upload(&state.db, &id).await?.commons_categories;
+    if categories.len() == 1 && categories.first() == Some(&category) {
+        return Err(AppError::bad_request(
+            "Файл павінен мець хаця б адну катэгорыю. Спачатку дадайце новую.",
+        ));
+    }
+    let original_len = categories.len();
+    categories.retain(|existing| existing != &category);
+    if categories.len() != original_len {
+        state.db.replace_categories(&id, &categories).await?;
+        tracing::info!(admin = %admin.username, upload_id = %id, category = %category, "moderator removed category");
+    }
+    category_update_response(&headers, &id, categories)
+}
+
+async fn admin_category_replace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<CategoryForm>,
+) -> Result<Response, AppError> {
+    let admin = require_admin(&state, &headers).await?;
+    AuthService::validate_csrf(&admin, &form.csrf_token)
+        .map_err(|_| AppError::forbidden("Несапраўдны запыт."))?;
+    let _operation = state.claim_upload(&id)?;
     required_upload(&state.db, &id).await?;
     let category = validate_category(&form.category)
-        .map_err(|_| AppError::bad_request("Некорректная категория Commons."))?;
-    state.db.update_category(&id, &category).await?;
-    tracing::info!(admin = %admin.username, upload_id = %id, category = %category, "moderator changed category");
-    Ok(redirect_to_upload(&id))
+        .map_err(|_| AppError::bad_request("Некарэктная катэгорыя Commons."))?;
+    let categories = vec![category.clone()];
+    state.db.replace_categories(&id, &categories).await?;
+    tracing::info!(admin = %admin.username, upload_id = %id, category = %category, "moderator replaced categories through legacy route");
+    category_update_response(&headers, &id, categories)
+}
+
+fn category_update_response(
+    headers: &HeaderMap,
+    id: &str,
+    categories: Vec<String>,
+) -> Result<Response, AppError> {
+    if accepts_json(headers) {
+        Ok(no_store_json(CategoryUpdateResponse { categories }))
+    } else {
+        Ok(redirect_to_upload(id))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct PublishForm {
+    csrf_token: String,
+    upload_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PublishResponse {
+    upload_id: String,
+    display_filename: String,
+    filename: String,
+    page_url: String,
+    file_url: Option<String>,
+}
+
+async fn admin_publish(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Form(form): Form<PublishForm>,
+) -> Result<Response, AppError> {
+    let admin = require_admin(&state, &headers).await?;
+    AuthService::validate_csrf(&admin, &form.csrf_token)
+        .map_err(|_| AppError::forbidden("Несапраўдны запыт."))?;
+    let _operation = state.claim_upload(&form.upload_id)?;
+    let publisher = state.publisher.as_ref().ok_or_else(|| {
+        AppError::service_unavailable("Уліковы запіс Wikimedia Commons яшчэ не наладжаны.")
+    })?;
+    let upload = required_upload(&state.db, &form.upload_id).await?;
+    validate_categories(&upload.commons_categories)
+        .map_err(|_| AppError::bad_request("Файл павінен мець хаця б адну катэгорыю."))?;
+    let stored_path = state.media.stored_path(&upload)?;
+    let published = publisher
+        .publish(&upload, &stored_path)
+        .await
+        .map_err(|error| publish_error(&admin, &upload, error))?;
+
+    if !state.db.delete_upload(&upload.id).await? {
+        return Err(AppError::not_found("Матэрыял не знойдзены."));
+    }
+    if let Err(error) = state.media.delete_files(&upload).await {
+        tracing::error!(
+            admin = %admin.username,
+            upload_id = %upload.id,
+            error = %format!("{error:#}"),
+            "published upload was removed from the database but media cleanup must be retried"
+        );
+    }
+    tracing::info!(
+        admin = %admin.username,
+        upload_id = %upload.id,
+        commons_filename = %published.filename,
+        "moderator published upload to Wikimedia Commons"
+    );
+    let response = PublishResponse {
+        upload_id: upload.id,
+        display_filename: upload.display_filename,
+        filename: published.filename,
+        page_url: published.page_url,
+        file_url: published.file_url,
+    };
+    if accepts_json(&headers) {
+        Ok(no_store_json(response))
+    } else {
+        Ok(Redirect::to("/admin").into_response())
+    }
+}
+
+fn publish_error(
+    admin: &AuthenticatedAdmin,
+    upload: &UploadRecord,
+    error: anyhow::Error,
+) -> AppError {
+    let detail = format!("{error:#}");
+    tracing::error!(
+        admin = %admin.username,
+        upload_id = %upload.id,
+        error = %detail,
+        "Wikimedia Commons publication failed"
+    );
+    if detail.contains("already exists") {
+        AppError::conflict(
+            "Файл з такой назвай ужо існуе ў Wikimedia Commons. Спачатку змяніце імя.",
+        )
+    } else if detail.contains("login") || detail.contains("authentication") {
+        AppError::service_unavailable("Не ўдалося ўвайсці ва ўліковы запіс Wikimedia Commons.")
+    } else if detail.contains("ratelimit") || detail.contains("rate limit") {
+        AppError::service_unavailable(
+            "Сэрвіс Wikimedia Commons часова абмежаваў частату запытаў. Паўтарыце пазней.",
+        )
+    } else {
+        AppError::bad_gateway("Не ўдалося запампаваць файл у Wikimedia Commons.")
+    }
 }
 
 async fn admin_delete(
@@ -409,10 +631,11 @@ async fn admin_delete(
 ) -> Result<Response, AppError> {
     let admin = require_admin(&state, &headers).await?;
     AuthService::validate_csrf(&admin, &form.csrf_token)
-        .map_err(|_| AppError::forbidden("Недействительный запрос."))?;
+        .map_err(|_| AppError::forbidden("Несапраўдны запыт."))?;
+    let _operation = state.claim_upload(&id)?;
     let upload = required_upload(&state.db, &id).await?;
     if !state.db.delete_upload(&id).await? {
-        return Err(AppError::not_found("Материал не найден."));
+        return Err(AppError::not_found("Матэрыял не знойдзены."));
     }
     if let Err(error) = state.media.delete_files(&upload).await {
         tracing::error!(admin = %admin.username, upload_id = %id, error = %format!("{error:#}"), "deleted database row but media cleanup must be retried");
@@ -440,7 +663,7 @@ async fn admin_thumbnail(
     require_admin(&state, &headers).await?;
     let upload = required_upload(&state.db, &id).await?;
     if upload.media_kind != "image" {
-        return Err(AppError::not_found("Миниатюра не найдена."));
+        return Err(AppError::not_found("Мініяцюра не знойдзена."));
     }
     stream_private_file(state.media.thumbnail_path(&id), "image/webp").await
 }
@@ -449,7 +672,7 @@ async fn stream_private_file(path: PathBuf, mime_type: &str) -> Result<Response,
     let file = tokio::fs::File::open(&path)
         .await
         .map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => AppError::not_found("Файл не найден."),
+            std::io::ErrorKind::NotFound => AppError::not_found("Файл не знойдзены."),
             _ => AppError::internal(format!("failed to open {}: {error}", path.display())),
         })?;
     let mut response = Response::new(Body::from_stream(ReaderStream::new(file)));
@@ -481,7 +704,7 @@ async fn category_search(
 ) -> Result<Json<CategorySearchResponse>, AppError> {
     let query = query.q.unwrap_or_default();
     if query.len() > 255 {
-        return Err(AppError::bad_request("Слишком длинный поисковый запрос."));
+        return Err(AppError::bad_request("Пошукавы запыт занадта доўгі."));
     }
     let categories = state.commons.search_categories(&query).await?;
     Ok(Json(CategorySearchResponse { categories }))
@@ -503,7 +726,7 @@ async fn nearby_categories(
         upload.latitude.context("В EXIF нет широты.")?,
         upload.longitude.context("В EXIF нет долготы.")?,
     )
-    .context("Координаты EXIF некорректны.")?;
+    .context("Каардынаты EXIF некарэктныя.")?;
     let categories = state.commons.nearby_categories(coordinates).await?;
     Ok(Json(NearbyResponse { categories }))
 }
@@ -516,13 +739,13 @@ async fn require_admin(
         .auth
         .current_admin(headers)
         .await?
-        .ok_or_else(|| AppError::unauthorized("Требуется вход в премодерацию."))
+        .ok_or_else(|| AppError::unauthorized("Патрабуецца ўвайсці ў панэль прэмадэрацыі."))
 }
 
 async fn required_upload(db: &Database, id: &str) -> Result<UploadRecord, AppError> {
     db.get_upload(id)
         .await?
-        .ok_or_else(|| AppError::not_found("Материал не найден."))
+        .ok_or_else(|| AppError::not_found("Матэрыял не знойдзены."))
 }
 
 fn redirect_to_upload(id: &str) -> Response {
@@ -575,7 +798,7 @@ fn static_response(content_type: &'static str, bytes: &'static [u8]) -> Response
 }
 
 async fn not_found() -> AppError {
-    AppError::not_found("Страница не найдена.")
+    AppError::not_found("Старонка не знойдзена.")
 }
 
 async fn security_headers(request: Request<Body>, next: Next) -> Response {
@@ -609,6 +832,25 @@ fn no_store_html(html: String) -> Response {
     response
 }
 
+fn no_store_json(value: impl Serialize) -> Response {
+    let mut response = Json(value).into_response();
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    response
+}
+
+fn accepts_json(headers: &HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .any(|item| item.trim() == "application/json")
+        })
+}
+
 fn safe_name(raw: &str) -> String {
     raw.chars()
         .filter(|character| !character.is_control())
@@ -619,23 +861,23 @@ fn safe_name(raw: &str) -> String {
 fn public_media_error(error: &anyhow::Error) -> String {
     let message = error.to_string();
     if message.contains("larger than") {
-        "Файл превышает допустимый размер.".into()
+        "Файл перавышае дапушчальны памер.".into()
     } else if message.contains("empty") {
-        "Получен пустой файл.".into()
+        "Атрыманы пусты файл.".into()
     } else if message.contains("unsupported") {
-        "Формат файла не поддерживается либо файл повреждён.".into()
+        "Фармат файла не падтрымліваецца або файл пашкоджаны.".into()
     } else if message.contains("dimensions") {
-        "Размеры изображения превышают допустимые.".into()
+        "Памеры выявы перавышаюць дапушчальныя.".into()
     } else if message.contains("storage") {
-        "На сервере недостаточно свободного места.".into()
+        "На серверы недастаткова вольнага месца.".into()
     } else if message.contains("queue") {
-        "Очередь премодерации заполнена. Попробуйте позже.".into()
+        "Чарга прэмадэрацыі запоўненая. Паспрабуйце пазней.".into()
     } else if message.contains("category") {
-        "Укажите категорию Wikimedia Commons.".into()
+        "Пазначце хаця б адну катэгорыю Wikimedia Commons.".into()
     } else if message.contains("conversion") {
-        "Не удалось преобразовать формат изображения.".into()
+        "Не ўдалося пераўтварыць фармат выявы.".into()
     } else {
-        "Файл повреждён либо его формат пока не поддерживается.".into()
+        "Файл пашкоджаны або яго фармат пакуль не падтрымліваецца.".into()
     }
 }
 
@@ -667,6 +909,20 @@ impl AppError {
         }
     }
 
+    fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            public_message: message.into(),
+        }
+    }
+
+    fn locked(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::LOCKED,
+            public_message: message.into(),
+        }
+    }
+
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
@@ -681,11 +937,18 @@ impl AppError {
         }
     }
 
+    fn bad_gateway(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            public_message: message.into(),
+        }
+    }
+
     fn internal(message: impl std::fmt::Display) -> Self {
         tracing::error!(error = %message, "request failed");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            public_message: "Внутренняя ошибка сервера.".into(),
+            public_message: "Унутраная памылка сервера.".into(),
         }
     }
 }
@@ -712,6 +975,6 @@ mod tests {
         let internal = anyhow::anyhow!("failed at /secret/path/image.jpg");
         assert!(!public_media_error(&internal).contains("/secret/path"));
         let expected = anyhow::anyhow!("unsupported or invalid media file");
-        assert!(public_media_error(&expected).contains("не поддерживается"));
+        assert!(public_media_error(&expected).contains("не падтрымліваецца"));
     }
 }
