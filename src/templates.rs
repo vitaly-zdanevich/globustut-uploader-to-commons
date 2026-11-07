@@ -56,7 +56,7 @@ pub fn upload_page(
             </form>
           </section>
         </main>
-        <footer class='upload-footer'>Дзякуй за захаванне культурнай спадчыны</footer>
+        <footer class='upload-footer'>Дзякуй за захаванне культурнай спадчыны. <a href='https://github.com/vitaly-zdanevich/globustut-uploader-to-commons'>Github</a></footer>
         "#
     );
     page("Дадаць фатаграфіі/відэа", &body, "upload-page")
