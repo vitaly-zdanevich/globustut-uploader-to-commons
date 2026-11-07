@@ -387,7 +387,7 @@ async fn reconciles_an_ambiguous_final_commit_and_cleans_pending_files() {
     {
         let mut behavior = mock.state.behavior.lock().unwrap();
         behavior.ambiguous_final_file =
-            Some(mock_existing_file(&fixture.upload, sha1, "Globustut"));
+            Some(mock_existing_file(&fixture.upload, sha1, "Globustut_users"));
         behavior.ambiguous_visibility_misses = 1;
     }
 
@@ -439,7 +439,7 @@ async fn preserves_pending_upload_when_ambiguous_commit_does_not_match() {
     let fixture = PendingPublishFixture::create(&mock, "mismatch-castle.jpg", "#b23a48").await;
     let sha1 = sha1_hex_for_test(&std::fs::read(&fixture.stored_path).unwrap());
     {
-        let mut existing = mock_existing_file(&fixture.upload, sha1, "Globustut");
+        let mut existing = mock_existing_file(&fixture.upload, sha1, "Globustut_users");
         existing.comment = "A different upload comment".into();
         mock.state.behavior.lock().unwrap().ambiguous_final_file = Some(existing);
     }
@@ -521,7 +521,7 @@ async fn reconciles_only_an_exact_previous_commons_upload_before_cleanup() {
     let existing = MockExistingFile {
         filename: upload.display_filename.clone(),
         sha1: "0000000000000000000000000000000".into(),
-        uploader: "Globustut".into(),
+        uploader: "Globustut_users".into(),
         comment: "Запампавана пасля прэмадэрацыі на globustut.by".into(),
         page_url: "https://commons.wikimedia.org/wiki/File:retry-castle.jpg".into(),
         file_url: "https://upload.wikimedia.org/mock/retry-castle.jpg".into(),
@@ -558,7 +558,7 @@ async fn reconciles_only_an_exact_previous_commons_upload_before_cleanup() {
     {
         let mut behavior = mock.state.behavior.lock().unwrap();
         let existing = behavior.existing_file.as_mut().unwrap();
-        existing.uploader = "Globustut".into();
+        existing.uploader = "Globustut_users".into();
         existing.comment = "Different upload comment".into();
     }
     let response = publish_request(&app, &cookie, &csrf, &upload.id).await;
@@ -982,7 +982,7 @@ async fn mock_commons_get(
             return Json(json!({
                 "query": {
                     "tokens": {"csrftoken": "mock-csrf-token"},
-                    "userinfo": {"id": 1, "name": "Globustut"}
+                    "userinfo": {"id": 1, "name": "Globustut_users"}
                 }
             }))
             .into_response();
@@ -1065,7 +1065,7 @@ async fn mock_commons_post(
             }))
             .into_response();
         }
-        let mut response = Json(json!({"login": {"result": "Success", "lgusername": "Globustut"}}))
+        let mut response = Json(json!({"login": {"result": "Success", "lgusername": "Globustut_users"}}))
             .into_response();
         response.headers_mut().insert(
             header::SET_COOKIE,

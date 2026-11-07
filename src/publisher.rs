@@ -15,7 +15,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Mutex;
 
-pub const COMMONS_ACCOUNT: &str = "Globustut";
+pub const COMMONS_ACCOUNT: &str = "Globustut_users";
 pub const COMMONS_BOT_USERNAME: &str = "Globustut@globustut-uploader";
 const CHUNK_SIZE: usize = 16 * 1024 * 1024;
 const UPLOAD_COMMENT: &str = "Запампавана пасля прэмадэрацыі на globustut.by";

@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 const port = Number(process.env.E2E_MOCK_PORT ?? '4174');
 const expectedPassword = process.env.E2E_COMMONS_BOT_PASSWORD ?? 'mock Commons BotPassword';
 const botUsername = 'Globustut@globustut-uploader';
-const accountName = 'Globustut';
+const accountName = 'Globustut_users';
 const loginToken = 'mock-login-token';
 const csrfToken = 'mock-csrf-token';
 const fileKey = 'mock-stashed-file';
