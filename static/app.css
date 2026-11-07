@@ -515,7 +515,6 @@ h2 {
 
 .primary-button:hover {
 	background: var(--accent-hover);
-	color: #fff;
 }
 
 .primary-button:disabled {
