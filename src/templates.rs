@@ -48,7 +48,7 @@ pub fn upload_page(
                 <input id='upload-category' type='text' name='category' value='{category}' maxlength='255' required autocomplete='off' spellcheck='false' role='combobox' aria-autocomplete='list' aria-haspopup='listbox' aria-controls='upload-category-menu' aria-expanded='false' data-category-input>
                 <div id='upload-category-menu' class='category-menu' role='listbox' data-category-menu hidden></div>
               </div>
-              <p class='license-note'>Запампоўваючы сюды свае фатаграфіі, вы публікуеце іх на ўмовах ліцэнзіі <strong>Creative Commons BY 4.0</strong>. Аўтар будзе пазначаны паводле метаданых.</p>
+              <p class='license-note'>Запампоўваючы сюды свае фатаздымкі, вы публікуеце іх на сайтах Глобус Беларусі і Wikimedia Commons (Wikipedia) на ўмовах ліцэнзіі <strong>Creative Commons BY 4.0</strong>. Аўтар будзе пазначаны паводле метаданых.</p>
               <div class='form-actions'>
                 <button class='primary-button' type='submit' data-submit>Адправіць на прэмадэрацыю</button>
                 <span class='submit-status' data-submit-status aria-live='polite'></span>
