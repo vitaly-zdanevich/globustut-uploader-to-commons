@@ -44,7 +44,7 @@ pub fn upload_page(
               <div class='selected-files' data-selected-files aria-live='polite'></div>
               <p class='file-error' role='alert' data-file-error hidden></p>
               <div class='field category-field'>
-                <label for='upload-category'>Катэгорыя Wikimedia Commons</label>
+                <label for='upload-category'>Катэгорыі Wikimedia Commons (не абавязкова - потым нехта праставіць)</label>
                 <input id='upload-category' type='text' name='category' value='{category}' maxlength='255' required autocomplete='off' spellcheck='false' role='combobox' aria-autocomplete='list' aria-haspopup='listbox' aria-controls='upload-category-menu' aria-expanded='false' data-category-input>
                 <div id='upload-category-menu' class='category-menu' role='listbox' data-category-menu hidden></div>
               </div>
